@@ -31,6 +31,7 @@ class ResultRow:
     due_date: Optional[str]
     amount: Optional[str]
     status: str                    # "מוכן לקבלה" / "דורש בדיקה ידנית"
+    maven_reference: Optional[str] # מספר האסמכתא מהשורה ב-Maven (88635 וכו')
     image_path: Optional[str]      # נתיב לצילום (לתיעוד)
 
 
@@ -46,6 +47,7 @@ HEADERS = [
     "תאריך פירעון",
     "סכום",
     "סטטוס",
+    "אסמכתא Maven",
     "קובץ צילום",
 ]
 
@@ -86,6 +88,7 @@ def write_results(rows: List[ResultRow], output_file: str = config.OUTPUT_FILE):
             r.due_date or "",
             r.amount or "",
             r.status,
+            r.maven_reference or "",
             r.image_path or "",
         ]
         fill = GREEN_FILL if r.status == STATUS_READY else YELLOW_FILL
@@ -95,7 +98,7 @@ def write_results(rows: List[ResultRow], output_file: str = config.OUTPUT_FILE):
             cell.alignment = Alignment(horizontal="center", vertical="center")
 
     # שלב 3: מרחיבים את העמודות שיהיה נוח לקרוא.
-    widths = [22, 22, 10, 12, 14, 8, 14, 14, 12, 18, 24]
+    widths = [22, 22, 10, 12, 14, 8, 14, 14, 12, 18, 14, 24]
     for col_index, width in enumerate(widths, start=1):
         sheet.column_dimensions[
             openpyxl.utils.get_column_letter(col_index)

@@ -70,9 +70,7 @@ def main():
 
             # אם לא הצלחנו להוריד צילום - מסמנים לבדיקה ידנית.
             if not check_row.image_path:
-                results.append(_blank_review_row(
-                    reason="לא הורד צילום של השיק"
-                ))
+                results.append(_blank_review_row(check_row.row_reference))
                 continue
 
             # קוראים את השיק עם Claude.
@@ -83,13 +81,14 @@ def main():
                 results.append(ResultRow(
                     detected_name=details.drawer_name,
                     matched_name=None, confidence=0,
-                    check_number=details.check_number or check_row.row_reference,
+                    check_number=details.check_number,
                     bank_name=details.bank_name,
                     branch_number=details.branch_number,
                     account_number=details.account_number,
                     due_date=details.due_date,
                     amount=details.amount,
                     status=STATUS_REVIEW,
+                    maven_reference=check_row.row_reference,
                     image_path=check_row.image_path,
                 ))
                 print("      🔶 הצילום לא קריא מספיק - דורש בדיקה ידנית.")
@@ -99,21 +98,19 @@ def main():
             match = matcher.match(details.drawer_name)
             status = STATUS_READY if not match.needs_review else STATUS_REVIEW
 
-            # מספר השיק: מעדיפים את מה שנקרא מהצילום; אם חסר -
-            # משתמשים במספר האסמכתא שמופיע בשורת הטבלה.
-            check_number = details.check_number or check_row.row_reference
-
             results.append(ResultRow(
                 detected_name=details.drawer_name,
                 matched_name=match.matched_name,
                 confidence=match.confidence,
-                check_number=check_number,
+                # מספר השיק נלקח מהצילום בלבד (האסמכתא מהשורה היא לא מספר השיק).
+                check_number=details.check_number,
                 bank_name=details.bank_name,
                 branch_number=details.branch_number,
                 account_number=details.account_number,
                 due_date=details.due_date,
                 amount=details.amount,
                 status=status,
+                maven_reference=check_row.row_reference,
                 image_path=check_row.image_path,
             ))
 
@@ -139,13 +136,13 @@ def main():
         print("   אחרי שתאשר - נוסיף את שלב הוצאת הקבלות.")
 
 
-def _blank_review_row(reason: str) -> ResultRow:
+def _blank_review_row(maven_reference=None) -> ResultRow:
     """שורה ריקה שמסומנת לבדיקה ידנית (כשלא הצלחנו להוריד צילום)."""
     return ResultRow(
         detected_name=None, matched_name=None, confidence=0,
         check_number=None, bank_name=None, branch_number=None,
         account_number=None, due_date=None, amount=None,
-        status=STATUS_REVIEW, image_path=None,
+        status=STATUS_REVIEW, maven_reference=maven_reference, image_path=None,
     )
 
 

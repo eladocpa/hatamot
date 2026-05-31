@@ -232,73 +232,74 @@ class BankMatchScraper:
 
     def _click_and_capture(self, element, image_path: str) -> bool:
         """
-        לוחץ על אלמנט נתון ומנסה לתפוס את צילום השיק שנפתח -
-        בין אם בחלון/לשונית חדשה ובין אם בחלונית קופצת (מודאל).
-        מחזיר True אם נשמר צילום.
+        לוחץ על אלמנט נתון. אם נפתחה חלונית קופצת (מודאל) עם צילום השיק -
+        שומר אותו וסוגר את החלונית. מחזיר True אם נשמר צילום.
         """
         try:
-            # אפשרות א': נפתח חלון/לשונית חדשה בעקבות הלחיצה.
-            try:
-                with self._page.context.expect_page(timeout=3000) as popup_info:
-                    element.click(timeout=2000)
-                popup = popup_info.value
-                popup.wait_for_load_state("domcontentloaded")
-                saved = self._save_image_from(popup, image_path)
-                popup.close()
-                if saved:
-                    return True
-            except PWTimeout:
-                pass  # לא נפתח חלון חדש -> בודקים מודאל באותו דף
-
-            # אפשרות ב': נפתחה חלונית/תמונה גדולה באותו דף.
-            time.sleep(1)
-            if self._save_image_from(self._page, image_path, in_modal=True):
-                self._page.keyboard.press("Escape")  # סוגרים את החלונית
-                time.sleep(0.4)
-                return True
-
+            element.click(timeout=2000)
         except Exception:
-            pass
+            return False
+
+        # החלונית נפתחת באותו מסך - מחכים שתופיע בה תמונה גדולה (צילום השיק).
+        if self._save_image_from(self._page, image_path):
+            self._close_modal()
+            return True
+
+        # שום צילום לא נפתח -> כנראה לחצנו על אלמנט שגוי. סוגרים ליתר ביטחון.
+        self._close_modal()
         return False
 
-    def _save_image_from(self, page: Page, image_path: str, in_modal: bool = False) -> bool:
+    def _close_modal(self):
+        """סוגר חלונית קופצת (בדרך כלל Esc סוגר; מנסה גם כפתור סגירה)."""
+        try:
+            self._page.keyboard.press("Escape")
+            time.sleep(0.3)
+        except Exception:
+            pass
+
+    def _save_image_from(self, page: Page, image_path: str, poll_seconds: int = 5) -> bool:
         """
-        מאתר את תמונת השיק בדף/חלון נתון ושומר אותה לקובץ.
-        מחזיר True אם הצליח.
+        ממתין עד שתופיע בדף תמונה גדולה (צילום השיק) ושומר אותה לקובץ.
+        מחזיר True אם הצליח, או False אם לא הופיעה תמונה תוך poll_seconds שניות.
+        """
+        deadline = time.time() + poll_seconds
+        while time.time() < deadline:
+            best = self._find_largest_image(page)
+            if best is not None:
+                try:
+                    best.screenshot(path=image_path)
+                    print(f"      📸 צילום השיק נשמר: {image_path}")
+                    return True
+                except Exception:
+                    pass
+            time.sleep(0.5)
+        return False
+
+    def _find_largest_image(self, page: Page):
+        """
+        מחזיר את אלמנט התמונה הגדול ביותר בדף - בדרך כלל זה צילום השיק
+        שנפתח בחלונית (ולא אייקון קטן). מחזיר None אם אין תמונה גדולה.
         """
         images = page.locator(POPUP_IMAGE_SELECTOR)
         count = images.count()
-        if count == 0:
-            return False
-
-        # בוחרים את התמונה הגדולה ביותר - בדרך כלל זו תמונת השיק עצמה
-        # (ולא אייקון קטן). מודדים את הגודל של כל תמונה ובוחרים את הגדולה.
-        best_index = -1
-        best_area = 0
+        best = None
+        # שטח מינימלי (בפיקסלים) כדי להתעלם מאייקונים ולוגו - דורשים תמונה גדולה.
+        best_area = 15000
         for idx in range(count):
             img = images.nth(idx)
             try:
+                if not img.is_visible():
+                    continue
                 box = img.bounding_box()
             except Exception:
                 box = None
             if box is None:
                 continue
             area = box["width"] * box["height"]
-            # מתעלמים מתמונות זעירות (אייקונים) - דורשים שטח מינימלי.
-            if area > best_area and area > 5000:
+            if area > best_area:
                 best_area = area
-                best_index = idx
-
-        if best_index == -1:
-            return False
-
-        # שומרים צילום מסך של אלמנט התמונה לקובץ.
-        try:
-            images.nth(best_index).screenshot(path=image_path)
-            print(f"      📸 צילום השיק נשמר: {image_path}")
-            return True
-        except Exception:
-            return False
+                best = img
+        return best
 
     # --------------------------------------------------------------
     #  סגירה מסודרת
