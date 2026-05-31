@@ -206,6 +206,8 @@ class BankMatchScraper:
         rows = self._page.locator(ROW_SELECTOR)
         total_rows = rows.count()
         new_count = 0
+        page_refs = []   # כל האסמכתאות של 'הפקדת שיק' בעמוד (לאבחון)
+        dup_count = 0    # כמה כפילויות דילגנו
 
         for i in range(total_rows):
             row = rows.nth(i)
@@ -221,7 +223,9 @@ class BankMatchScraper:
             # מחלצים את מספר האסמכתא (המספר בסוגריים) ומדלגים על כפילויות.
             ref_match = ROW_REFERENCE_PATTERN.search(row_text)
             row_reference = ref_match.group(1) if ref_match else None
+            page_refs.append(row_reference or "?")
             if row_reference and row_reference in seen_references:
+                dup_count += 1
                 continue
             if row_reference:
                 seen_references.add(row_reference)
@@ -241,46 +245,40 @@ class BankMatchScraper:
             )
             new_count += 1
 
+        # אבחון: מה נמצא בעמוד הזה (עוזר להבין אם יש שיקים בעמודים נוספים).
+        if page_refs:
+            shown = ", ".join(page_refs[:15])
+            print(f"   🔎 שורות 'הפקדת שיק' בעמוד: {len(page_refs)} "
+                  f"(אסמכתאות: {shown})")
+            if dup_count:
+                print(f"      ({dup_count} כפילויות דולגו - כבר עובדו בעמוד קודם)")
+        else:
+            print("   🔎 אין שורות 'הפקדת שיק' בעמוד הזה.")
+
         return new_count
 
-    def _page_signature(self) -> str:
+    def _data_signature(self) -> str:
         """
-        מחזיר סימן לזיהוי העמוד הנוכחי, כדי לדעת אם הדפדוף באמת עבד.
-        עיקרי: מספר העמוד *הפעיל* באזור הדפדוף (אמין ומדויק).
-        גיבוי: חתימת טקסט של שורות שמכילות תאריך (משתנות בין עמודים).
+        מחזיר 'טביעת אצבע' של *שורות הנתונים* בעמוד (שורות שמכילות תאריך).
+        אלה השורות שמתחלפות בין עמודים, אז זו הדרך האמינה לדעת אם
+        תוכן העמוד באמת התעדכן (ולא רק מספר העמוד באזור הדפדוף).
         """
-        # 1) מספר העמוד הפעיל
-        paginator = self._find_paginator()
-        if paginator is not None:
-            for selector in ACTIVE_PAGE_SELECTORS:
-                try:
-                    el = paginator.locator(selector).first
-                    if el.count() > 0:
-                        txt = el.inner_text(timeout=1500).strip()
-                        if txt:
-                            return "page:" + txt
-                except Exception:
-                    continue
-
-        # 2) גיבוי: טקסט של עד 5 שורות שמכילות תאריך
         try:
             rows = self._page.locator(ROW_SELECTOR)
             total = rows.count()
             parts = []
             for i in range(total):
-                if len(parts) >= 5:
+                if len(parts) >= 6:
                     break
                 try:
                     t = rows.nth(i).inner_text(timeout=800)
                 except Exception:
                     continue
-                if "/20" in t:  # שורה שמכילה תאריך
+                if "/20" in t:  # שורה שמכילה תאריך = שורת תנועה
                     parts.append(" ".join(t.split()))
-            if parts:
-                return "rows:" + " | ".join(parts)[:500]
+            return " | ".join(parts)[:600]
         except Exception:
-            pass
-        return ""
+            return ""
 
     def _find_paginator(self):
         """מאתר את מיכל אזור הדפדוף. מחזיר locator או None."""
@@ -300,7 +298,7 @@ class BankMatchScraper:
         (2) ואם לא נמצא - ללחוץ על חץ "הבא".
         מחזיר True אם עברנו לעמוד חדש, או False אם הגענו לסוף.
         """
-        before = self._page_signature()
+        before = self._data_signature()
         clicked = False
 
         # אסטרטגיה 1: לחיצה על כפתור "הבא" (החץ) - מדויק לפי מבנה האתר.
@@ -331,19 +329,17 @@ class BankMatchScraper:
                 self._dump_pagination_html()
             return False
 
-        # מחכים שהעמוד יתעדכן (JSF/AJAX טוען חלק מהתוכן בנפרד).
-        try:
-            self._page.wait_for_load_state("networkidle")
-        except PWTimeout:
-            pass
-        time.sleep(2)
+        # ממתינים עד ש*שורות הנתונים עצמן* יתחלפו (ולא רק מספר העמוד).
+        # זה מונע סריקה של תוכן ישן לפני שה-AJAX סיים לטעון את העמוד החדש.
+        deadline = time.time() + 10
+        while time.time() < deadline:
+            now = self._data_signature()
+            if now and now != before:
+                time.sleep(0.5)  # רגע קטן נוסף שהכל יתייצב
+                return True
+            time.sleep(0.5)
 
-        # אם תוכן השורות השתנה - עברנו עמוד בהצלחה.
-        if self._page_signature() != before:
-            return True
-
-        # לחצנו אבל העמוד לא השתנה. מדפיסים את ה-HTML של אזור הדפדוף
-        # כדי שנוכל לדייק את הסלקטור (אם זו לא באמת הגענו לסוף).
+        # תוכן השורות לא השתנה תוך 10 שניות - כנראה הגענו לסוף (או תקלה).
         if config.DEBUG_PRINT_HTML:
             self._dump_pagination_html()
         return False
