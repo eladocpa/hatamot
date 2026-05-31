@@ -1,0 +1,11 @@
+# קבצים סודיים ופרטיים - לא להעלות ל-git לעולם!
+.env
+customers.xlsx
+תוצאות_שיקים.xlsx
+checks_images/
+
+# קבצים זמניים של פייתון
+__pycache__/
+*.pyc
+.venv/
+venv/
