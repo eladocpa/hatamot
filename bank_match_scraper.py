@@ -45,27 +45,36 @@ ICON_CANDIDATE_SELECTOR = "img, i, svg, button, a, [onclick]"
 # הכלי ינסה למצוא את התמונה הגדולה ביותר בחלון/חלונית שנפתחה.
 POPUP_IMAGE_SELECTOR = "img"
 
-# מעבר ל"עמוד הבא" במנוע הדפדוף = תנועות מוקדמות יותר (דפדוף אחורה בזמן).
-# הכלי ינסה קודם ללחוץ על *מספר העמוד הבא*, ואם לא - על חץ "הבא".
-# חצי "הבא" - הכלי ינסה את הסלקטורים לפי הסדר. הקלאסים האלה יציבים
-# גם כשהתצוגה מימין-לשמאל (ה-RTL הופך רק את הכיוון החזותי, לא את הקלאס).
+# מעבר ל"עמוד הבא" במנוע הדפדוף (RichFaces dataScroller) = תנועות מוקדמות
+# יותר. הכלי לוחץ על כפתור "הבא"; כשמגיעים לעמוד האחרון הכפתור מקבל
+# class="disabled" ואין בו <a>, אז הסלקטורים האלה פשוט לא ימצאו כלום -> סוף.
 NEXT_PAGE_SELECTORS = [
-    ".ui-paginator-next:not(.ui-state-disabled)",     # PrimeFaces
-    ".p-paginator-next:not(.p-disabled)",             # PrimeNG / PrimeReact
-    "button.p-paginator-next",
-    "a.ui-paginator-next",
-    "[class*='paginator-next']:not([disabled])",
-    "button[aria-label*='Next']",
+    "li.paginate_button.next:not(.disabled) a",   # המבנה המדויק באתר
+    "li.page-item.next:not(.disabled) a",
+    ".paginate_button.next a",
+    "li.next a",
+    # גיבויים למסגרות אחרות (ליתר ביטחון)
+    ".ui-paginator-next:not(.ui-state-disabled)",
+    ".p-paginator-next:not(.p-disabled)",
     "a[aria-label*='Next']",
-    "[title*='הבא']",
 ]
 
-# מיכל אזור הדפדוף - בתוכו נחפש את כפתורי מספרי העמודים.
+# מיכל אזור הדפדוף - בתוכו נחפש את מספר העמוד הפעיל ואת כפתורי המספרים.
 PAGINATOR_CONTAINER_SELECTORS = [
+    "ul.pagination",
+    ".pagination",
+    "[class*='paginat']",
     ".ui-paginator",
     ".p-paginator",
-    "[class*='paginat']",
     "tfoot",
+]
+
+# סלקטורים למספר העמוד *הפעיל* (כדי לזהות שבאמת עברנו עמוד).
+ACTIVE_PAGE_SELECTORS = [
+    "li.paginate_button.active",
+    "li.page-item.active",
+    "li.active",
+    ".active",
 ]
 
 # תבנית לחילוץ מספר האסמכתא מתוך טקסט השורה, למשל "הפקדת שיק - (88635)".
@@ -236,23 +245,42 @@ class BankMatchScraper:
 
     def _page_signature(self) -> str:
         """
-        מחזיר 'טביעת אצבע' של תוכן השורות בעמוד הנוכחי, כדי לזהות
-        אם הדפדוף באמת שינה את העמוד (ולא נשארנו במקום).
-        משתמש באותן שורות שאנחנו סורקים (אמין יותר מטבלה כללית).
+        מחזיר סימן לזיהוי העמוד הנוכחי, כדי לדעת אם הדפדוף באמת עבד.
+        עיקרי: מספר העמוד *הפעיל* באזור הדפדוף (אמין ומדויק).
+        גיבוי: חתימת טקסט של שורות שמכילות תאריך (משתנות בין עמודים).
         """
-        try:
-            rows = self._page.locator(ROW_SELECTOR)
-            n = min(rows.count(), 12)
-            parts = []
-            for i in range(n):
+        # 1) מספר העמוד הפעיל
+        paginator = self._find_paginator()
+        if paginator is not None:
+            for selector in ACTIVE_PAGE_SELECTORS:
                 try:
-                    parts.append(rows.nth(i).inner_text(timeout=1000))
+                    el = paginator.locator(selector).first
+                    if el.count() > 0:
+                        txt = el.inner_text(timeout=1500).strip()
+                        if txt:
+                            return "page:" + txt
                 except Exception:
                     continue
-            text = " ".join(" ".join(parts).split())
+
+        # 2) גיבוי: טקסט של עד 5 שורות שמכילות תאריך
+        try:
+            rows = self._page.locator(ROW_SELECTOR)
+            total = rows.count()
+            parts = []
+            for i in range(total):
+                if len(parts) >= 5:
+                    break
+                try:
+                    t = rows.nth(i).inner_text(timeout=800)
+                except Exception:
+                    continue
+                if "/20" in t:  # שורה שמכילה תאריך
+                    parts.append(" ".join(t.split()))
+            if parts:
+                return "rows:" + " | ".join(parts)[:500]
         except Exception:
-            text = ""
-        return text[:600]
+            pass
+        return ""
 
     def _find_paginator(self):
         """מאתר את מיכל אזור הדפדוף. מחזיר locator או None."""
@@ -273,30 +301,30 @@ class BankMatchScraper:
         מחזיר True אם עברנו לעמוד חדש, או False אם הגענו לסוף.
         """
         before = self._page_signature()
-        paginator = self._find_paginator()
-        scope = paginator if paginator is not None else self._page
         clicked = False
 
-        # אסטרטגיה 1: לחיצה על מספר העמוד הבא (יציב גם ב-RTL).
-        try:
-            number_btn = scope.get_by_text(str(target_page), exact=True).first
-            if number_btn.count() > 0 and number_btn.is_visible():
-                number_btn.click(timeout=3000)
-                clicked = True
-        except Exception:
-            clicked = False
+        # אסטרטגיה 1: לחיצה על כפתור "הבא" (החץ) - מדויק לפי מבנה האתר.
+        for selector in NEXT_PAGE_SELECTORS:
+            cand = self._page.locator(selector).first
+            try:
+                if cand.count() > 0 and cand.is_visible():
+                    cand.click(timeout=3000)
+                    clicked = True
+                    break
+            except Exception:
+                continue
 
-        # אסטרטגיה 2: לחיצה על חץ "הבא".
+        # אסטרטגיה 2: גיבוי - לחיצה ישירה על מספר העמוד הבא.
         if not clicked:
-            for selector in NEXT_PAGE_SELECTORS:
-                cand = self._page.locator(selector).first
-                try:
-                    if cand.count() > 0 and cand.is_visible() and cand.is_enabled():
-                        cand.click(timeout=3000)
-                        clicked = True
-                        break
-                except Exception:
-                    continue
+            paginator = self._find_paginator()
+            scope = paginator if paginator is not None else self._page
+            try:
+                number_btn = scope.get_by_text(str(target_page), exact=True).first
+                if number_btn.count() > 0 and number_btn.is_visible():
+                    number_btn.click(timeout=3000)
+                    clicked = True
+            except Exception:
+                clicked = False
 
         if not clicked:
             if config.DEBUG_PRINT_HTML:
