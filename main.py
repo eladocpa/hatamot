@@ -56,7 +56,7 @@ def main():
 
     try:
         scraper.start_and_login()
-        scraper.go_to_bank_match()
+        scraper.focus_bank_match_page()
         check_rows = scraper.collect_check_rows()
 
         if not check_rows:
