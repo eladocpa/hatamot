@@ -15,6 +15,7 @@
 ==================================================================
 """
 
+import json
 import os
 import re
 import time
@@ -171,7 +172,26 @@ class BankMatchScraper:
             )
 
         print(f"\n✅ סיימתי לסרוק. נמצאו {len(results)} תנועות 'הפקדת שיק'.")
+
+        # שומרים "אינדקס" קטן של מה שמצאנו, ליד הצילומים.
+        # זה מאפשר לעבד מחדש את הצילומים בלי להיכנס שוב ל-Maven
+        # (באמצעות הסקריפט process_only.py).
+        self._save_index(results)
         return results
+
+    def _save_index(self, rows: List[CheckRow]):
+        """שומר קובץ אינדקס (checks_index.json) שמקשר צילום -> אסמכתא + טקסט שורה."""
+        index = [
+            {
+                "image_path": r.image_path,
+                "row_reference": r.row_reference,
+                "row_text": r.row_text,
+            }
+            for r in rows
+        ]
+        index_path = os.path.join(config.IMAGES_DIR, "checks_index.json")
+        with open(index_path, "w", encoding="utf-8") as f:
+            json.dump(index, f, ensure_ascii=False, indent=2)
 
     # --------------------------------------------------------------
     #  לחיצה על אייקון המסמך ושמירת התמונה

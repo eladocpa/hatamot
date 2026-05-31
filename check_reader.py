@@ -28,33 +28,43 @@ import config
 class CheckDetails(BaseModel):
     """הפרטים שמחלצים מצילום של שיק אחד."""
 
+    # לכל השדות יש ברירת מחדל None, כדי שנוכל לבנות אובייקט "ריק"
+    # במקרה של כשל בקריאה בלי שהקוד יקרוס.
     drawer_name: Optional[str] = Field(
+        default=None,
         description="שם הלקוח / המושך - מי שכתב את השיק. "
                     "בדרך כלל מודפס בחלק העליון של השיק. "
                     "אם לא ברור או לא קריא - החזר null."
     )
     check_number: Optional[str] = Field(
+        default=None,
         description="מספר השיק - מופיע בדרך כלל בפינה השמאלית התחתונה של השיק "
                     "(לעיתים גם בפינה הימנית העליונה). זהו מספר השיק עצמו, "
                     "ולא מספר אסמכתא או מספר חשבון."
     )
     bank_name: Optional[str] = Field(
+        default=None,
         description="שם הבנק (למשל: לאומי, פועלים, דיסקונט, מזרחי טפחות)."
     )
     branch_number: Optional[str] = Field(
+        default=None,
         description="מספר הסניף - מספר בן 3 ספרות בדרך כלל."
     )
     account_number: Optional[str] = Field(
+        default=None,
         description="מספר חשבון הבנק שמופיע על השיק."
     )
     due_date: Optional[str] = Field(
+        default=None,
         description="תאריך הפירעון של השיק, בפורמט DD/MM/YYYY. "
                     "אם זה שיק דחוי - זה התאריך העתידי הכתוב עליו."
     )
     amount: Optional[str] = Field(
+        default=None,
         description="סכום השיק במספרים בלבד (למשל '1500.00'), בלי סימן שקל ובלי פסיקים."
     )
     is_readable: bool = Field(
+        default=False,
         description="האם הצילום ברור מספיק כדי לקרוא ממנו את הפרטים בביטחון? "
                     "אם הצילום מטושטש/חתוך/לא שיק - החזר false."
     )

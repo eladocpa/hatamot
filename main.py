@@ -16,6 +16,8 @@
 ==================================================================
 """
 
+import os
+
 from dotenv import load_dotenv
 
 import config
@@ -25,10 +27,39 @@ from customer_matcher import CustomerMatcher, load_customers
 from excel_writer import ResultRow, STATUS_READY, STATUS_REVIEW, write_results
 
 
+def _load_api_key() -> bool:
+    """
+    טוען את מפתח ה-API מקובץ .env, ובודק שהוא תקין.
+    מטפל גם בתקלה נפוצה בווינדוס: Notepad ששומר את הקובץ כ-.env.txt.
+    מחזיר True אם הכל תקין, או מדפיס הסבר ומחזיר False אם לא.
+    """
+    load_dotenv()  # מנסה לטעון מקובץ .env בתיקייה הנוכחית
+    # אם המפתח עדיין לא נטען - אולי הקובץ נשמר בטעות כ-.env.txt
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        load_dotenv(".env.txt")
+
+    api_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
+
+    # בודקים שהמפתח קיים, שאינו טקסט הדוגמה, ושנראה כמו מפתח אמיתי.
+    if not api_key or "הדבק" in api_key or not api_key.startswith("sk-ant-"):
+        print("\n❌ מפתח ה-API של Claude לא נמצא או לא תקין.")
+        print("   בדוק את הדברים הבאים:")
+        print("   1. שיש קובץ בשם .env בתיקייה הזו (לא .env.txt!).")
+        print("      ב-Notepad: בשמירה, בחר 'Save as type' = 'All Files',")
+        print("      וכתוב את השם בדיוק: .env")
+        print("   2. שבתוכו כתוב:  ANTHROPIC_API_KEY=sk-ant-...")
+        print("      (המפתח האמיתי שלך, בלי רווחים ובלי מירכאות).")
+        print("   3. שהחלפת את טקסט הדוגמה במפתח האמיתי מ-console.anthropic.com.")
+        return False
+
+    return True
+
+
 def main():
-    # טוען את מפתח ה-API מקובץ .env אל תוך משתני הסביבה.
-    # ככה Claude מקבל את המפתח בלי שהוא כתוב בקוד.
-    load_dotenv()
+    # טוען את מפתח ה-API. אם משהו לא תקין - עוצרים כאן,
+    # לפני שפותחים דפדפן (כדי לא להתחבר ל-Maven סתם).
+    if not _load_api_key():
+        return
 
     print("=" * 60)
     print("  🧾  כלי התאמות בנק - הפקדות שיקים  🧾")
