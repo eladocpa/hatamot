@@ -10,6 +10,7 @@
 """
 
 from dataclasses import dataclass
+from datetime import datetime
 from typing import List, Optional
 
 import openpyxl
@@ -104,5 +105,15 @@ def write_results(rows: List[ResultRow], output_file: str = config.OUTPUT_FILE):
             openpyxl.utils.get_column_letter(col_index)
         ].width = width
 
-    workbook.save(output_file)
-    print(f"\n📊 קובץ התוצאות נשמר: {output_file}")
+    # שמירה חסינה: אם הקובץ פתוח באקסל (PermissionError) - לא קורסים
+    # ולא מאבדים את העבודה. שומרים לקובץ חלופי עם חותמת זמן ומודיעים.
+    try:
+        workbook.save(output_file)
+        print(f"\n📊 קובץ התוצאות נשמר: {output_file}")
+    except PermissionError:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        alt_file = output_file.replace(".xlsx", f"_{timestamp}.xlsx")
+        workbook.save(alt_file)
+        print(f"\n⚠️  הקובץ '{output_file}' היה פתוח (אולי באקסל), אז לא ניתן היה לדרוס אותו.")
+        print(f"📊 שמרתי במקום זאת לקובץ חדש: {alt_file}")
+        print("   (טיפ: סגור את הקובץ באקסל לפני הרצה כדי שיישמר בשם הרגיל.)")

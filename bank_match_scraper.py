@@ -236,16 +236,23 @@ class BankMatchScraper:
 
     def _page_signature(self) -> str:
         """
-        מחזיר 'טביעת אצבע' של תוכן הטבלה בעמוד הנוכחי, כדי לזהות
+        מחזיר 'טביעת אצבע' של תוכן השורות בעמוד הנוכחי, כדי לזהות
         אם הדפדוף באמת שינה את העמוד (ולא נשארנו במקום).
+        משתמש באותן שורות שאנחנו סורקים (אמין יותר מטבלה כללית).
         """
         try:
-            table = self._page.locator("table").first
-            text = table.inner_text(timeout=3000)
+            rows = self._page.locator(ROW_SELECTOR)
+            n = min(rows.count(), 12)
+            parts = []
+            for i in range(n):
+                try:
+                    parts.append(rows.nth(i).inner_text(timeout=1000))
+                except Exception:
+                    continue
+            text = " ".join(" ".join(parts).split())
         except Exception:
             text = ""
-        # מנקים רווחים ולוקחים חתימה מתומצתת.
-        return " ".join(text.split())[:400]
+        return text[:600]
 
     def _find_paginator(self):
         """מאתר את מיכל אזור הדפדוף. מחזיר locator או None."""
@@ -303,8 +310,15 @@ class BankMatchScraper:
             pass
         time.sleep(2)
 
-        # אם תוכן הטבלה לא השתנה - לא באמת עברנו עמוד -> סוף.
-        return self._page_signature() != before
+        # אם תוכן השורות השתנה - עברנו עמוד בהצלחה.
+        if self._page_signature() != before:
+            return True
+
+        # לחצנו אבל העמוד לא השתנה. מדפיסים את ה-HTML של אזור הדפדוף
+        # כדי שנוכל לדייק את הסלקטור (אם זו לא באמת הגענו לסוף).
+        if config.DEBUG_PRINT_HTML:
+            self._dump_pagination_html()
+        return False
 
     def _dump_pagination_html(self):
         """
@@ -312,17 +326,27 @@ class BankMatchScraper:
         (תוכל להעתיק ולשלוח לי אם הדפדוף לא עובד.)
         """
         print("      🐞 לא הצלחתי לדפדף. העתק את ה-HTML הבא ושלח לי:")
+        self.print_pagination_html()
+
+    def print_pagination_html(self):
+        """מדפיס את ה-HTML של אזור הדפדוף (לאבחון, בלי קריאות API)."""
+        print("=" * 60)
+        print("  HTML של אזור הדפדוף:")
+        print("=" * 60)
+        found_any = False
         for selector in PAGINATOR_CONTAINER_SELECTORS:
             try:
                 area = self._page.locator(selector).first
-                if area.count() > 0:
-                    print("      " + "-" * 50)
-                    print(f"      ({selector}):")
-                    print(area.inner_html(timeout=2000)[:1500])
+                if area.count() > 0 and area.is_visible():
+                    print(f"\n--- נמצא ב: {selector} ---")
+                    print(area.inner_html(timeout=3000)[:3000])
+                    found_any = True
                     break
             except Exception:
                 continue
-        print("      " + "-" * 50)
+        if not found_any:
+            print("  ⚠️  לא נמצא אזור דפדוף לפי הסלקטורים המוכרים.")
+        print("=" * 60)
 
     def _save_index(self, rows: List[CheckRow]):
         """שומר קובץ אינדקס (checks_index.json) שמקשר צילום -> אסמכתא + טקסט שורה."""
