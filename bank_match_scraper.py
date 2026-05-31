@@ -45,6 +45,29 @@ ICON_CANDIDATE_SELECTOR = "img, i, svg, button, a, [onclick]"
 # הכלי ינסה למצוא את התמונה הגדולה ביותר בחלון/חלונית שנפתחה.
 POPUP_IMAGE_SELECTOR = "img"
 
+# מעבר ל"עמוד הבא" במנוע הדפדוף = תנועות מוקדמות יותר (דפדוף אחורה בזמן).
+# הכלי ינסה קודם ללחוץ על *מספר העמוד הבא*, ואם לא - על חץ "הבא".
+# חצי "הבא" - הכלי ינסה את הסלקטורים לפי הסדר. הקלאסים האלה יציבים
+# גם כשהתצוגה מימין-לשמאל (ה-RTL הופך רק את הכיוון החזותי, לא את הקלאס).
+NEXT_PAGE_SELECTORS = [
+    ".ui-paginator-next:not(.ui-state-disabled)",     # PrimeFaces
+    ".p-paginator-next:not(.p-disabled)",             # PrimeNG / PrimeReact
+    "button.p-paginator-next",
+    "a.ui-paginator-next",
+    "[class*='paginator-next']:not([disabled])",
+    "button[aria-label*='Next']",
+    "a[aria-label*='Next']",
+    "[title*='הבא']",
+]
+
+# מיכל אזור הדפדוף - בתוכו נחפש את כפתורי מספרי העמודים.
+PAGINATOR_CONTAINER_SELECTORS = [
+    ".ui-paginator",
+    ".p-paginator",
+    "[class*='paginat']",
+    "tfoot",
+]
+
 # תבנית לחילוץ מספר האסמכתא מתוך טקסט השורה, למשל "הפקדת שיק - (88635)".
 ROW_REFERENCE_PATTERN = re.compile(r"\((\d+)\)")
 
@@ -131,16 +154,50 @@ class BankMatchScraper:
     # --------------------------------------------------------------
     def collect_check_rows(self) -> List[CheckRow]:
         """
-        עובר על כל השורות בטבלה, מאתר רק את שורות "הפקדת שיק",
-        ולכל אחת לוחץ על אייקון המסמך ומוריד את צילום השיק.
+        עובר על כל העמודים (עם דפדוף אחורה), ובכל עמוד מאתר את שורות
+        "הפקדת שיק", מוריד את הצילום, וממשיך עד שאין יותר עמודים אחורה.
+        מונע כפילויות לפי מספר האסמכתא.
         """
         results: List[CheckRow] = []
+        seen_references = set()  # אסמכתאות שכבר עיבדנו (למניעת כפילויות)
+        page_num = 1
 
+        while True:
+            print(f"\n📄 ===== עמוד {page_num} =====")
+            new_count = self._scan_current_page(results, seen_references)
+            print(f"   נמצאו {new_count} שיקים חדשים בעמוד זה "
+                  f"(סה\"כ עד כה: {len(results)}).")
+
+            # הגנה: לא חורגים ממספר העמודים המקסימלי.
+            if page_num >= config.MAX_PAGES:
+                print(f"   ⚠️  הגעתי למגבלת {config.MAX_PAGES} עמודים - עוצר.")
+                break
+
+            # מנסים לעבור לעמוד הבא (תנועות מוקדמות יותר). אם אין - סיימנו.
+            if not self._go_to_next_page(page_num + 1):
+                print("   ✅ אין עוד עמודים - הגענו למסך האחרון.")
+                break
+
+            page_num += 1
+
+        print(f"\n✅ סיימתי לסרוק {page_num} עמודים. "
+              f"סה\"כ {len(results)} תנועות 'הפקדת שיק'.")
+
+        # שומרים "אינדקס" קטן של מה שמצאנו, ליד הצילומים.
+        # זה מאפשר לעבד מחדש את הצילומים בלי להיכנס שוב ל-Maven
+        # (באמצעות הסקריפט process_only.py).
+        self._save_index(results)
+        return results
+
+    def _scan_current_page(self, results: List[CheckRow], seen_references: set) -> int:
+        """
+        סורק את העמוד הנוכחי: מאתר שורות 'הפקדת שיק', מוריד צילום לכל אחת,
+        ומוסיף ל-results. מדלג על אסמכתאות שכבר ראינו. מחזיר כמה חדשות נמצאו.
+        """
         rows = self._page.locator(ROW_SELECTOR)
         total_rows = rows.count()
-        print(f"\n🔎 נמצאו {total_rows} שורות בטבלה. סורק אחרי 'הפקדת שיק'...")
+        new_count = 0
 
-        check_counter = 0
         for i in range(total_rows):
             row = rows.nth(i)
             try:
@@ -152,16 +209,19 @@ class BankMatchScraper:
             if config.CHECK_DEPOSIT_LABEL not in row_text:
                 continue
 
-            check_counter += 1
-            short_text = " ".join(row_text.split())[:70]
-            print(f"\n  💳 שיק #{check_counter} (שורה {i}): {short_text}...")
-
-            # מחלצים את מספר האסמכתא מתוך טקסט השורה (המספר בסוגריים).
+            # מחלצים את מספר האסמכתא (המספר בסוגריים) ומדלגים על כפילויות.
             ref_match = ROW_REFERENCE_PATTERN.search(row_text)
             row_reference = ref_match.group(1) if ref_match else None
+            if row_reference and row_reference in seen_references:
+                continue
+            if row_reference:
+                seen_references.add(row_reference)
 
-            # מנסים לפתוח ולהוריד את צילום השיק של השורה הזו.
-            image_path = self._capture_check_image(row, check_counter)
+            check_number = len(results) + 1
+            short_text = " ".join(row_text.split())[:70]
+            print(f"\n  💳 שיק #{check_number}: {short_text}...")
+
+            image_path = self._capture_check_image(row, check_number)
             results.append(
                 CheckRow(
                     row_index=i,
@@ -170,14 +230,99 @@ class BankMatchScraper:
                     row_reference=row_reference,
                 )
             )
+            new_count += 1
 
-        print(f"\n✅ סיימתי לסרוק. נמצאו {len(results)} תנועות 'הפקדת שיק'.")
+        return new_count
 
-        # שומרים "אינדקס" קטן של מה שמצאנו, ליד הצילומים.
-        # זה מאפשר לעבד מחדש את הצילומים בלי להיכנס שוב ל-Maven
-        # (באמצעות הסקריפט process_only.py).
-        self._save_index(results)
-        return results
+    def _page_signature(self) -> str:
+        """
+        מחזיר 'טביעת אצבע' של תוכן הטבלה בעמוד הנוכחי, כדי לזהות
+        אם הדפדוף באמת שינה את העמוד (ולא נשארנו במקום).
+        """
+        try:
+            table = self._page.locator("table").first
+            text = table.inner_text(timeout=3000)
+        except Exception:
+            text = ""
+        # מנקים רווחים ולוקחים חתימה מתומצתת.
+        return " ".join(text.split())[:400]
+
+    def _find_paginator(self):
+        """מאתר את מיכל אזור הדפדוף. מחזיר locator או None."""
+        for selector in PAGINATOR_CONTAINER_SELECTORS:
+            cand = self._page.locator(selector).first
+            try:
+                if cand.count() > 0 and cand.is_visible():
+                    return cand
+            except Exception:
+                continue
+        return None
+
+    def _go_to_next_page(self, target_page: int) -> bool:
+        """
+        עובר לעמוד הבא (תנועות מוקדמות יותר). שתי אסטרטגיות:
+        (1) ללחוץ ישירות על מספר העמוד הבא (target_page),
+        (2) ואם לא נמצא - ללחוץ על חץ "הבא".
+        מחזיר True אם עברנו לעמוד חדש, או False אם הגענו לסוף.
+        """
+        before = self._page_signature()
+        paginator = self._find_paginator()
+        scope = paginator if paginator is not None else self._page
+        clicked = False
+
+        # אסטרטגיה 1: לחיצה על מספר העמוד הבא (יציב גם ב-RTL).
+        try:
+            number_btn = scope.get_by_text(str(target_page), exact=True).first
+            if number_btn.count() > 0 and number_btn.is_visible():
+                number_btn.click(timeout=3000)
+                clicked = True
+        except Exception:
+            clicked = False
+
+        # אסטרטגיה 2: לחיצה על חץ "הבא".
+        if not clicked:
+            for selector in NEXT_PAGE_SELECTORS:
+                cand = self._page.locator(selector).first
+                try:
+                    if cand.count() > 0 and cand.is_visible() and cand.is_enabled():
+                        cand.click(timeout=3000)
+                        clicked = True
+                        break
+                except Exception:
+                    continue
+
+        if not clicked:
+            if config.DEBUG_PRINT_HTML:
+                self._dump_pagination_html()
+            return False
+
+        # מחכים שהעמוד יתעדכן (JSF/AJAX טוען חלק מהתוכן בנפרד).
+        try:
+            self._page.wait_for_load_state("networkidle")
+        except PWTimeout:
+            pass
+        time.sleep(2)
+
+        # אם תוכן הטבלה לא השתנה - לא באמת עברנו עמוד -> סוף.
+        return self._page_signature() != before
+
+    def _dump_pagination_html(self):
+        """
+        מדפיס את ה-HTML של אזור הדפדוף, כדי שנוכל לדייק את הסלקטורים.
+        (תוכל להעתיק ולשלוח לי אם הדפדוף לא עובד.)
+        """
+        print("      🐞 לא הצלחתי לדפדף. העתק את ה-HTML הבא ושלח לי:")
+        for selector in PAGINATOR_CONTAINER_SELECTORS:
+            try:
+                area = self._page.locator(selector).first
+                if area.count() > 0:
+                    print("      " + "-" * 50)
+                    print(f"      ({selector}):")
+                    print(area.inner_html(timeout=2000)[:1500])
+                    break
+            except Exception:
+                continue
+        print("      " + "-" * 50)
 
     def _save_index(self, rows: List[CheckRow]):
         """שומר קובץ אינדקס (checks_index.json) שמקשר צילום -> אסמכתא + טקסט שורה."""
