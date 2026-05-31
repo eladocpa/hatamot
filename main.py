@@ -83,7 +83,7 @@ def main():
                 results.append(ResultRow(
                     detected_name=details.drawer_name,
                     matched_name=None, confidence=0,
-                    check_number=details.check_number,
+                    check_number=details.check_number or check_row.row_reference,
                     bank_name=details.bank_name,
                     branch_number=details.branch_number,
                     account_number=details.account_number,
@@ -99,11 +99,15 @@ def main():
             match = matcher.match(details.drawer_name)
             status = STATUS_READY if not match.needs_review else STATUS_REVIEW
 
+            # מספר השיק: מעדיפים את מה שנקרא מהצילום; אם חסר -
+            # משתמשים במספר האסמכתא שמופיע בשורת הטבלה.
+            check_number = details.check_number or check_row.row_reference
+
             results.append(ResultRow(
                 detected_name=details.drawer_name,
                 matched_name=match.matched_name,
                 confidence=match.confidence,
-                check_number=details.check_number,
+                check_number=check_number,
                 bank_name=details.bank_name,
                 branch_number=details.branch_number,
                 account_number=details.account_number,

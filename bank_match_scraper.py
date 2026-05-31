@@ -16,6 +16,7 @@
 """
 
 import os
+import re
 import time
 from dataclasses import dataclass
 from typing import List, Optional
@@ -34,22 +35,17 @@ import config
 # סלקטור לשורות בטבלה. ברירת מחדל: כל שורת טבלה (<tr>) בדף.
 ROW_SELECTOR = "table tr"
 
-# בתוך שורה - הסלקטור לאייקון/קישור שפותח את צילום המסמך.
-# אנחנו מחפשים קישור או תמונה שנראים כמו "מסמך/צילום".
-# (a = קישור, img = תמונה. הכלי ינסה כמה אפשרויות.)
-DOCUMENT_ICON_SELECTORS = [
-    "a[title*='מסמך']",
-    "a[title*='שיק']",
-    "a[title*='צילום']",
-    "img[title*='מסמך']",
-    "a:has(img)",        # קישור שמכיל תמונה (אייקון)
-    "img[src*='doc']",
-    "img[src*='scan']",
-]
+# אלמנטים שייחשבו כ"אייקון השטר" בתוך תא הפעולה, לפי סדר עדיפות.
+# מנסים קודם אלמנטים שנראים כמו אייקון (תמונה/אייקון/כפתור), ואז קישורים.
+# הכלי לוחץ על כל מועמד ובודק אם נפתח צילום; אם כן - עוצר. אם לא - ממשיך לבא.
+ICON_CANDIDATE_SELECTOR = "img, i, svg, button, a, [onclick]"
 
 # כשנפתח צילום השיק - איפה התמונה נמצאת?
 # הכלי ינסה למצוא את התמונה הגדולה ביותר בחלון/חלונית שנפתחה.
 POPUP_IMAGE_SELECTOR = "img"
+
+# תבנית לחילוץ מספר האסמכתא מתוך טקסט השורה, למשל "הפקדת שיק - (88635)".
+ROW_REFERENCE_PATTERN = re.compile(r"\((\d+)\)")
 
 # ==================================================================
 
@@ -57,9 +53,10 @@ POPUP_IMAGE_SELECTOR = "img"
 @dataclass
 class CheckRow:
     """שורת "הפקדת שיק" שמצאנו, יחד עם הנתיב לצילום שהורדנו."""
-    row_index: int            # מספר השורה בטבלה (לתיעוד)
-    row_text: str             # הטקסט המלא של השורה (לתיעוד)
-    image_path: Optional[str] # נתיב לקובץ הצילום שהורדנו (או None אם נכשל)
+    row_index: int                   # מספר השורה בטבלה (לתיעוד)
+    row_text: str                    # הטקסט המלא של השורה (לתיעוד)
+    image_path: Optional[str]        # נתיב לקובץ הצילום שהורדנו (או None)
+    row_reference: Optional[str] = None  # המספר בסוגריים מהשורה, למשל "88635"
 
 
 class BankMatchScraper:
@@ -158,10 +155,19 @@ class BankMatchScraper:
             short_text = " ".join(row_text.split())[:70]
             print(f"\n  💳 שיק #{check_counter} (שורה {i}): {short_text}...")
 
+            # מחלצים את מספר האסמכתא מתוך טקסט השורה (המספר בסוגריים).
+            ref_match = ROW_REFERENCE_PATTERN.search(row_text)
+            row_reference = ref_match.group(1) if ref_match else None
+
             # מנסים לפתוח ולהוריד את צילום השיק של השורה הזו.
             image_path = self._capture_check_image(row, check_counter)
             results.append(
-                CheckRow(row_index=i, row_text=row_text, image_path=image_path)
+                CheckRow(
+                    row_index=i,
+                    row_text=row_text,
+                    image_path=image_path,
+                    row_reference=row_reference,
+                )
             )
 
         print(f"\n✅ סיימתי לסרוק. נמצאו {len(results)} תנועות 'הפקדת שיק'.")
@@ -172,57 +178,88 @@ class BankMatchScraper:
     # --------------------------------------------------------------
     def _capture_check_image(self, row, check_number: int) -> Optional[str]:
         """
-        בתוך שורה נתונה - מאתר את אייקון המסמך, לוחץ עליו,
-        ושומר את צילום השיק לקובץ. מחזיר את נתיב הקובץ, או None אם נכשל.
+        בתוך שורה נתונה - מאתר את תא ה'פעולה' (זה שמכיל 'הפקדת שיק'),
+        מנסה ללחוץ על אייקון השטר שבו, ושומר את צילום השיק לקובץ.
+        מחזיר את נתיב הקובץ, או None אם נכשל.
         """
-        # שלב 1: מחפשים את אייקון המסמך בתוך השורה, לפי הרשימה שלמעלה.
-        icon = None
-        for selector in DOCUMENT_ICON_SELECTORS:
-            candidate = row.locator(selector).first
-            if candidate.count() > 0:
-                icon = candidate
-                break
-
-        if icon is None:
-            print("      ⚠️  לא נמצא אייקון מסמך בשורה הזו - מדלג.")
-            return None
-
         image_path = os.path.join(
             config.IMAGES_DIR, f"check_{check_number:03d}.png"
         )
 
-        # שלב 2: לוחצים על האייקון. הצילום עשוי להיפתח באחת משתי דרכים:
-        #   (א) בחלון/לשונית חדשה   (ב) בחלונית קופצת (מודאל) באותו דף.
-        # אנחנו מטפלים בשתי האפשרויות.
-        try:
-            # מנסים קודם לתפוס חלון חדש שנפתח בעקבות הלחיצה.
+        # שלב 1: מאתרים את התא בשורה שמכיל את הטקסט 'הפקדת שיק' (תא הפעולה).
+        # שם נמצא אייקון השטר. אם לא נמצא - מחפשים בכל השורה.
+        action_cell = row.locator(
+            "td", has_text=config.CHECK_DEPOSIT_LABEL
+        ).first
+        if action_cell.count() == 0:
+            action_cell = row
+
+        # שלב 2: אוספים את כל ה"מועמדים" להיות אייקון השטר בתוך התא.
+        candidates = action_cell.locator(ICON_CANDIDATE_SELECTOR)
+        count = candidates.count()
+
+        # שלב 3: לוחצים על כל מועמד בתורו ובודקים אם נפתח צילום.
+        # מדלגים על האלמנט שמכיל את הטקסט 'הפקדת שיק' עצמו (לא האייקון).
+        for j in range(count):
+            cand = candidates.nth(j)
             try:
-                with self._page.context.expect_page(timeout=4000) as popup_info:
-                    icon.click()
+                if not cand.is_visible():
+                    continue
+                text = cand.inner_text(timeout=500)
+            except Exception:
+                text = ""
+            if config.CHECK_DEPOSIT_LABEL in text:
+                continue  # זה קישור הטקסט, לא אייקון הצילום
+
+            if self._click_and_capture(cand, image_path):
+                return image_path
+
+        # שלב 4: לא הצלחנו. מדפיסים את ה-HTML של התא לצורך כיוונון.
+        # (תוכל להעתיק את הפלט הזה ולשלוח לי כדי שאדייק את הזיהוי.)
+        if config.DEBUG_PRINT_HTML:
+            try:
+                html = action_cell.inner_html(timeout=2000)
+                print("      🐞 לא מצאתי את אייקון הצילום. "
+                      "העתק את ה-HTML הבא ושלח לי:")
+                print("      " + "-" * 50)
+                print(html[:1500])
+                print("      " + "-" * 50)
+            except Exception:
+                pass
+
+        print("      ⚠️  לא נמצא צילום ברור לשיק הזה - מסומן לבדיקה ידנית.")
+        return None
+
+    def _click_and_capture(self, element, image_path: str) -> bool:
+        """
+        לוחץ על אלמנט נתון ומנסה לתפוס את צילום השיק שנפתח -
+        בין אם בחלון/לשונית חדשה ובין אם בחלונית קופצת (מודאל).
+        מחזיר True אם נשמר צילום.
+        """
+        try:
+            # אפשרות א': נפתח חלון/לשונית חדשה בעקבות הלחיצה.
+            try:
+                with self._page.context.expect_page(timeout=3000) as popup_info:
+                    element.click(timeout=2000)
                 popup = popup_info.value
                 popup.wait_for_load_state("domcontentloaded")
                 saved = self._save_image_from(popup, image_path)
                 popup.close()
                 if saved:
-                    return image_path
+                    return True
             except PWTimeout:
-                # לא נפתח חלון חדש -> כנראה נפתחה חלונית באותו דף.
-                pass
+                pass  # לא נפתח חלון חדש -> בודקים מודאל באותו דף
 
-            # מחפשים את התמונה שנפתחה בדף הנוכחי (מודאל / לייטבוקס).
+            # אפשרות ב': נפתחה חלונית/תמונה גדולה באותו דף.
             time.sleep(1)
-            saved = self._save_image_from(self._page, image_path, in_modal=True)
-            if saved:
-                # סוגרים את החלונית כדי להמשיך לשיק הבא (Esc בדרך כלל סוגר).
-                self._page.keyboard.press("Escape")
-                time.sleep(0.5)
-                return image_path
+            if self._save_image_from(self._page, image_path, in_modal=True):
+                self._page.keyboard.press("Escape")  # סוגרים את החלונית
+                time.sleep(0.4)
+                return True
 
-        except Exception as e:
-            print(f"      ⚠️  לא הצלחתי להוריד את הצילום: {e}")
-
-        print("      ⚠️  לא נמצא צילום ברור לשיק הזה.")
-        return None
+        except Exception:
+            pass
+        return False
 
     def _save_image_from(self, page: Page, image_path: str, in_modal: bool = False) -> bool:
         """
