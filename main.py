@@ -29,30 +29,45 @@ from excel_writer import ResultRow, STATUS_READY, STATUS_REVIEW, write_results
 
 def _load_api_key() -> bool:
     """
-    טוען את מפתח ה-API מקובץ .env, ובודק שהוא תקין.
-    מטפל גם בתקלה נפוצה בווינדוס: Notepad ששומר את הקובץ כ-.env.txt.
-    מחזיר True אם הכל תקין, או מדפיס הסבר ומחזיר False אם לא.
+    טוען את מפתח ה-API מקובץ .env (או .env.txt), מנקה אותו אם צריך,
+    ובודק שהוא תקין. מחזיר True אם הכל תקין, או מדפיס אבחון ומחזיר False.
     """
-    load_dotenv()  # מנסה לטעון מקובץ .env בתיקייה הנוכחית
-    # אם המפתח עדיין לא נטען - אולי הקובץ נשמר בטעות כ-.env.txt
-    if not os.environ.get("ANTHROPIC_API_KEY"):
-        load_dotenv(".env.txt")
+    # טוענים משני השמות האפשריים (Notepad לפעמים שומר כ-.env.txt).
+    for fname in (".env", ".env.txt"):
+        if os.path.exists(fname):
+            load_dotenv(fname, override=True)
 
-    api_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
+    api_key = os.environ.get("ANTHROPIC_API_KEY", "").strip().strip('"').strip("'")
 
-    # בודקים שהמפתח קיים, שאינו טקסט הדוגמה, ושנראה כמו מפתח אמיתי.
-    if not api_key or "הדבק" in api_key or not api_key.startswith("sk-ant-"):
-        print("\n❌ מפתח ה-API של Claude לא נמצא או לא תקין.")
-        print("   בדוק את הדברים הבאים:")
-        print("   1. שיש קובץ בשם .env בתיקייה הזו (לא .env.txt!).")
-        print("      ב-Notepad: בשמירה, בחר 'Save as type' = 'All Files',")
-        print("      וכתוב את השם בדיוק: .env")
-        print("   2. שבתוכו כתוב:  ANTHROPIC_API_KEY=sk-ant-...")
-        print("      (המפתח האמיתי שלך, בלי רווחים ובלי מירכאות).")
-        print("   3. שהחלפת את טקסט הדוגמה במפתח האמיתי מ-console.anthropic.com.")
-        return False
+    # ניקוי אוטומטי: אם נשאר טקסט הדוגמה בעברית דבוק לסוף המפתח - חותכים אותו.
+    if "הדבק" in api_key:
+        api_key = api_key.split("הדבק")[0].rstrip("- ").strip()
 
-    return True
+    # אם נראה תקין - מעדכנים לערך הנקי וממשיכים.
+    if api_key.startswith("sk-ant-") and len(api_key) > 30:
+        os.environ["ANTHROPIC_API_KEY"] = api_key
+        return True
+
+    # נכשל - מדפיסים אבחון מדויק שיעזור להבין מה הבעיה.
+    print("\n❌ מפתח ה-API של Claude לא נמצא או לא תקין.")
+    found = [f for f in (".env", ".env.txt") if os.path.exists(f)]
+    if found:
+        print(f"   📄 נמצאו הקבצים: {', '.join(found)}")
+    else:
+        print("   ⚠️  לא נמצא קובץ .env בתיקייה הזו בכלל!")
+
+    if api_key:
+        preview = (api_key[:14] + "..." + api_key[-4:]) if len(api_key) > 20 else api_key
+        print(f"   🔎 המפתח שנקרא: {preview}  (אורך {len(api_key)} תווים)")
+        if not api_key.startswith("sk-ant-"):
+            print("   👉 המפתח לא מתחיל ב-sk-ant- . כנראה הועתק לא נכון.")
+    else:
+        print("   🔎 לא נקרא שום ערך עבור ANTHROPIC_API_KEY.")
+
+    print("\n   💡 הדרך הקלה והבטוחה ביותר לתקן: הרץ")
+    print("        python set_key.py")
+    print("      והדבק את המפתח. זה ייצור קובץ .env תקין אוטומטית.")
+    return False
 
 
 def main():
