@@ -146,12 +146,13 @@ def _match_positive(reader, matcher, item: CheckItem, details) -> ResultRow:
             evidence="הצילום לא קריא",
         )
 
-    # התאמת לקוח (ח.פ + שם + סכום).
+    # התאמת לקוח (ח.פ + שם + סכום + תאריך).
     amount_for_match = details.amount or item.row_amount
     match = matcher.match(
         detected_name=details.drawer_name,
         company_id=details.company_id,
         amount=amount_for_match,
+        due_date=details.due_date,
     )
     status = STATUS_READY if not match.needs_review else STATUS_REVIEW
     evidence_text = "; ".join(match.evidence) if match.evidence else match.reason

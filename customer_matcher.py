@@ -19,7 +19,8 @@
 import os
 import re
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Set
+from datetime import date, datetime, timedelta
+from typing import Dict, List, Optional, Set, Tuple
 
 import openpyxl
 from thefuzz import fuzz, process
@@ -33,6 +34,13 @@ class Customer:
     name: str
     customer_id: str
     company_id: Optional[str] = None  # ח.פ / עוסק מורשה (אופציונלי)
+
+
+@dataclass
+class IncomeEntry:
+    """תנועת הכנסה בודדת: שם לקוח + תאריך (התאריך אופציונלי)."""
+    name: str
+    income_date: Optional[date] = None
 
 
 @dataclass
@@ -99,11 +107,11 @@ def load_customers(file_path: str = config.CUSTOMERS_FILE) -> List[Customer]:
     return customers
 
 
-def load_income_index(file_path: str = config.INCOME_FILE) -> Dict[str, Set[str]]:
+def load_income_index(file_path: str = config.INCOME_FILE) -> Dict[str, List[IncomeEntry]]:
     """
     טוען את קובץ תנועות ההכנסה (אם קיים) ובונה מילון:
-    סכום_מנורמל -> קבוצת שמות לקוחות שהיו להם הכנסה בסכום הזה.
-    אם הקובץ לא קיים - מחזיר מילון ריק (פשוט מדלגים על השלב).
+    סכום_מנורמל -> רשימת תנועות הכנסה (שם + תאריך) בסכום הזה.
+    עמודת התאריך אופציונלית. אם הקובץ לא קיים - מחזיר מילון ריק.
     """
     if not os.path.exists(file_path):
         return {}
@@ -113,8 +121,9 @@ def load_income_index(file_path: str = config.INCOME_FILE) -> Dict[str, Set[str]
     header_row = next(sheet.iter_rows(min_row=1, max_row=1, values_only=True))
     amount_col = _find_column(header_row, config.INCOME_AMOUNT_COLUMN, "סכום")
     name_col = _find_column(header_row, config.INCOME_NAME_COLUMN, "שם", "לקוח")
+    date_col = _find_column(header_row, config.INCOME_DATE_COLUMN, "תאריך")
 
-    index: Dict[str, Set[str]] = {}
+    index: Dict[str, List[IncomeEntry]] = {}
     if amount_col is None:
         workbook.close()
         return index
@@ -126,7 +135,12 @@ def load_income_index(file_path: str = config.INCOME_FILE) -> Dict[str, Set[str]
         name = ""
         if name_col is not None and name_col < len(row) and row[name_col] is not None:
             name = str(row[name_col]).strip()
-        index.setdefault(amount, set()).add(name)
+        income_date = None
+        if date_col is not None and date_col < len(row):
+            income_date = _parse_date(row[date_col])
+        index.setdefault(amount, []).append(
+            IncomeEntry(name=name, income_date=income_date)
+        )
 
     workbook.close()
     return index
@@ -166,6 +180,32 @@ def _normalize_amount(raw) -> Optional[str]:
     return f"{value:.2f}".rstrip("0").rstrip(".")
 
 
+def _parse_date(raw) -> Optional[date]:
+    """
+    ממיר תאריך לאובייקט date. תומך בכמה פורמטים נפוצים:
+    DD/MM/YYYY, DD-MM-YYYY, וגם תאריך אמיתי מאקסל (datetime).
+    מחזיר None אם אי אפשר לפענח.
+    """
+    if raw is None:
+        return None
+    # אקסל לפעמים מחזיר datetime אמיתי - מטפלים בו ישירות.
+    if isinstance(raw, datetime):
+        return raw.date()
+    if isinstance(raw, date):
+        return raw
+    text = str(raw).strip()
+    if text == "":
+        return None
+    # מנקים שעה אם הודבקה (למשל "30/06/2026 00:00:00").
+    text = text.split(" ")[0]
+    for fmt in ("%d/%m/%Y", "%d-%m-%Y", "%Y-%m-%d", "%d.%m.%Y", "%d/%m/%y"):
+        try:
+            return datetime.strptime(text, fmt).date()
+        except ValueError:
+            continue
+    return None
+
+
 class CustomerMatcher:
     """מתאים שיקים ללקוחות לפי ח.פ, שם, וסכום הכנסה."""
 
@@ -185,9 +225,10 @@ class CustomerMatcher:
         detected_name: Optional[str],
         company_id: Optional[str] = None,
         amount: Optional[str] = None,
+        due_date: Optional[str] = None,
     ) -> MatchResult:
         """
-        מתאים שיק ללקוח. משלב שלושה אותות: ח.פ, שם, וסכום הכנסה.
+        מתאים שיק ללקוח. משלב ארבעה אותות: ח.פ, שם, סכום הכנסה, ותאריך.
         מחיל את הכלל: בספק - לבדיקה ידנית.
         """
         evidence: List[str] = []
@@ -228,25 +269,46 @@ class CustomerMatcher:
         second_score = top_matches[1][1] if len(top_matches) > 1 else 0
         gap = best_score - second_score
 
-        # ---- אות 3: סכום הכנסה (מחזק) ----
-        # אם יש תנועת הכנסה בסכום זהה, ושם הלקוח שלה תואם למועמד -
-        # זה מחזק את ההתאמה (מוסיף נקודות ביטחון).
+        # ---- אות 3+4: סכום הכנסה + תאריך (מחזק) ----
+        # אם יש תנועת הכנסה בסכום זהה, שם תואם, ובתאריך מוקדם/שווה לתאריך
+        # פירעון השיק - זה מחזק את ההתאמה. תאריך תואם נותן חיזוק חזק יותר.
         income_boost = 0
         norm_amount = _normalize_amount(amount) if amount else None
+        check_date = _parse_date(due_date)
         if norm_amount and norm_amount in self.income_index:
-            income_names = self.income_index[norm_amount]
-            # בודקים אם שם הלקוח המועמד מופיע בין ההכנסות באותו סכום.
-            for income_name in income_names:
-                if income_name and fuzz.token_sort_ratio(
-                    _normalize(income_name), best_name
-                ) >= config.MATCH_CONFIDENCE_THRESHOLD:
-                    income_boost = 8
-                    evidence.append(f"סכום זהה בתנועות הכנסה ({norm_amount})")
+            entries = self.income_index[norm_amount]
+            name_matched = False
+            date_ok = False
+            for entry in entries:
+                if not entry.name:
+                    continue
+                if fuzz.token_sort_ratio(
+                    _normalize(entry.name), best_name
+                ) < config.MATCH_CONFIDENCE_THRESHOLD:
+                    continue
+                # השם תואם. עכשיו בודקים את התאריך (אם יש לשניהם).
+                name_matched = True
+                if entry.income_date and check_date:
+                    grace = timedelta(days=config.INCOME_DATE_GRACE_DAYS)
+                    # תקין אם ההכנסה מוקדמת (או שווה) לפירעון, בחלון חסד.
+                    if entry.income_date <= check_date + grace:
+                        date_ok = True
+                        break
+                else:
+                    # אין תאריך להשוואה - מסתפקים בהתאמת סכום+שם.
                     break
-            else:
+
+            if name_matched and date_ok:
+                income_boost = 12  # סכום + שם + תאריך = חיזוק חזק
+                evidence.append(
+                    f"הכנסה תואמת בסכום ובתאריך מוקדם ({norm_amount})"
+                )
+            elif name_matched:
+                income_boost = 8   # סכום + שם (בלי אישור תאריך)
+                evidence.append(f"סכום זהה בתנועות הכנסה ({norm_amount})")
+            elif entries:
                 # סכום קיים אך השם לא תואם - אות חלש, רק לתיעוד.
-                if income_names:
-                    evidence.append(f"סכום {norm_amount} קיים בהכנסות (שם אחר)")
+                evidence.append(f"סכום {norm_amount} קיים בהכנסות (שם אחר)")
 
         effective_score = min(100, best_score + income_boost)
         if best_score >= config.MATCH_CONFIDENCE_THRESHOLD or income_boost:

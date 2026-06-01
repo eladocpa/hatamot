@@ -31,7 +31,11 @@ def create_template():
     sheet.title = "הכנסות"
     sheet.sheet_view.rightToLeft = True
 
-    headers = [config.INCOME_AMOUNT_COLUMN, config.INCOME_NAME_COLUMN]
+    headers = [
+        config.INCOME_AMOUNT_COLUMN,
+        config.INCOME_NAME_COLUMN,
+        config.INCOME_DATE_COLUMN,  # "תאריך" - אופציונלי אך משפר דיוק
+    ]
     fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
     for col_index, header in enumerate(headers, start=1):
         cell = sheet.cell(row=1, column=col_index, value=header)
@@ -40,11 +44,13 @@ def create_template():
         cell.alignment = Alignment(horizontal="center")
 
     # שורות דוגמה - מחק ומלא את תנועות ההכנסה האמיתיות.
-    sheet.append([1696, "ישראל ישראלי בע\"מ"])
-    sheet.append([3850, "חברת אבן וסיד בע\"מ"])
+    # התאריך בפורמט DD/MM/YYYY (תאריך ההכנסה, בדרך כלל מוקדם לתאריך השיק).
+    sheet.append([1696, "ישראל ישראלי בע\"מ", "20/05/2026"])
+    sheet.append([3850, "חברת אבן וסיד בע\"מ", "22/05/2026"])
 
     sheet.column_dimensions["A"].width = 14
     sheet.column_dimensions["B"].width = 30
+    sheet.column_dimensions["C"].width = 14
 
     workbook.save(config.INCOME_FILE)
     print(f"✅ נוצרה תבנית: '{config.INCOME_FILE}'")
