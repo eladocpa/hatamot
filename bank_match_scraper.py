@@ -237,8 +237,10 @@ class BankMatchScraper:
             except PWTimeout:
                 continue
 
-            # מתעלמים מכל שורה שאינה הפקדת שיק.
-            if config.CHECK_DEPOSIT_LABEL not in row_text:
+            # מזהים סוג השורה: הפקדת שיק או החזרת שיק. מתעלמים מכל השאר.
+            is_deposit = config.CHECK_DEPOSIT_LABEL in row_text
+            is_return = config.CHECK_RETURN_LABEL in row_text
+            if not is_deposit and not is_return:
                 continue
 
             # מחלצים את מספר האסמכתא (המספר בסוגריים) ומדלגים על כפילויות.
@@ -251,16 +253,18 @@ class BankMatchScraper:
             if row_reference:
                 seen_references.add(row_reference)
 
-            # מחלצים את הסכום ובודקים אם הוא שלילי = פעולת החזרת שיק.
-            row_amount, is_bounced = _parse_amount(row_text)
+            # מחלצים את הסכום מהשורה (לתיעוד ולגיבוי התאמה).
+            row_amount, _ = _parse_amount(row_text)
+            # שיק שחזר = שורת "החזרת שיק" (לפי התווית, לא לפי סימן הסכום).
+            is_bounced = is_return
 
             check_number = len(results) + 1
             short_text = " ".join(row_text.split())[:70]
-            bounce_tag = "  ⛔ (החזרת שיק - סכום שלילי)" if is_bounced else ""
+            bounce_tag = "  ⛔ (החזרת שיק)" if is_bounced else ""
             print(f"\n  💳 שיק #{check_number}: {short_text}...{bounce_tag}")
 
-            # מורידים צילום גם משורה שלילית! נצטרך לקרוא ממנו את מספר השיק
-            # כדי לזהות איזו הפקדה חיובית להחריג. (שורה שלילית = השיק שחזר.)
+            # מורידים צילום גם מהחזרת שיק - נקרא ממנו את מספר השיק שחזר,
+            # כדי להחריג את ההפקדה החיובית התואמת.
             image_path = self._capture_check_image(row, check_number)
 
             results.append(
@@ -278,12 +282,12 @@ class BankMatchScraper:
         # אבחון: מה נמצא בעמוד הזה (עוזר להבין אם יש שיקים בעמודים נוספים).
         if page_refs:
             shown = ", ".join(page_refs[:15])
-            print(f"   🔎 שורות 'הפקדת שיק' בעמוד: {len(page_refs)} "
+            print(f"   🔎 שורות שיק (הפקדה/החזרה) בעמוד: {len(page_refs)} "
                   f"(אסמכתאות: {shown})")
             if dup_count:
                 print(f"      ({dup_count} כפילויות דולגו - כבר עובדו בעמוד קודם)")
         else:
-            print("   🔎 אין שורות 'הפקדת שיק' בעמוד הזה.")
+            print("   🔎 אין שורות שיק בעמוד הזה.")
 
         return new_count
 
