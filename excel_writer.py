@@ -40,6 +40,7 @@ class ResultRow:
 
 # הכותרות של העמודות, בסדר שביקשת.
 HEADERS = [
+    "לאשר?",            # <<< אתה ממלא: כתוב "כן" בשורות שברצונך להוציא להן קבלה
     "שם לקוח שזוהה",
     "לקוח מותאם ברשימה",
     "רמת ודאות",
@@ -84,7 +85,11 @@ def write_results(rows: List[ResultRow], output_file: str = config.OUTPUT_FILE):
 
     # שלב 2: כותבים שורה לכל שיק, וצובעים לפי הסטטוס.
     for row_index, r in enumerate(rows, start=2):
+        # עמודת "לאשר?": מציעים "כן" כברירת מחדל לשורות מוכנות לקבלה,
+        # וריק לשורות שדורשות בדיקה / שיקים שחזרו. אתה יכול לשנות ידנית.
+        approve_default = "כן" if r.status == STATUS_READY else ""
         values = [
+            approve_default,
             r.detected_name or "",
             r.matched_name or "",
             f"{r.confidence}%" if r.confidence else "",
@@ -113,7 +118,7 @@ def write_results(rows: List[ResultRow], output_file: str = config.OUTPUT_FILE):
             cell.alignment = Alignment(horizontal="center", vertical="center")
 
     # שלב 3: מרחיבים את העמודות שיהיה נוח לקרוא.
-    widths = [22, 22, 10, 12, 12, 14, 8, 14, 14, 12, 20, 24, 14, 24]
+    widths = [8, 22, 22, 10, 12, 12, 14, 8, 14, 14, 12, 20, 24, 14, 24]
     for col_index, width in enumerate(widths, start=1):
         sheet.column_dimensions[
             openpyxl.utils.get_column_letter(col_index)

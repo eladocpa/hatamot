@@ -1,7 +1,9 @@
 # קבצים סודיים ופרטיים - לא להעלות ל-git לעולם!
 .env
 customers.xlsx
+income.xlsx
 תוצאות_שיקים.xlsx
+receipts_log.csv
 checks_images/
 
 # קבצים זמניים של פייתון
