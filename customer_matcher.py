@@ -39,11 +39,12 @@ class Customer:
 class MatchResult:
     """תוצאת ההתאמה של שיק ללקוח."""
     matched_name: Optional[str]      # שם הלקוח שנמצא ברשימה (או None)
-    matched_id: Optional[str]        # מזהה הלקוח שנמצא (או None)
+    matched_id: Optional[str]        # מזהה הלקוח במערכת (או None)
     confidence: int                  # רמת ודאות 0-100
     needs_review: bool               # האם השורה דורשת בדיקה ידנית?
     reason: str                      # הסבר קצר (למה ודאי / למה לבדיקה)
     evidence: List[str] = field(default_factory=list)  # אילו אותות תמכו בהתאמה
+    matched_company_id: Optional[str] = None  # ח.פ הלקוח מהמערכת (לרשימה)
 
 
 def _find_column(header_row, *names) -> Optional[int]:
@@ -201,6 +202,7 @@ class CustomerMatcher:
                 matched_name=cust.name, matched_id=cust.customer_id,
                 confidence=100, needs_review=False,
                 reason="התאמה ודאית לפי ח.פ", evidence=evidence,
+                matched_company_id=cust.company_id,
             )
 
         # ---- אות 2: שם (השוואה מטושטשת) ----
@@ -257,6 +259,7 @@ class CustomerMatcher:
                 matched_name=best_customer.name, matched_id=best_customer.customer_id,
                 confidence=effective_score, needs_review=True,
                 reason=f"התאמה חלשה ({best_score}%)", evidence=evidence,
+                matched_company_id=best_customer.company_id,
             )
 
         # שני לקוחות דומים מדי, ואין אות מכריע (ח.פ/סכום) -> בדיקה ידנית.
@@ -267,6 +270,7 @@ class CustomerMatcher:
                 matched_name=best_customer.name, matched_id=best_customer.customer_id,
                 confidence=effective_score, needs_review=True,
                 reason=f"כמה לקוחות דומים (פער {gap}% בלבד)", evidence=evidence,
+                matched_company_id=best_customer.company_id,
             )
 
         # התאמה ודאית!
@@ -277,4 +281,5 @@ class CustomerMatcher:
             matched_name=best_customer.name, matched_id=best_customer.customer_id,
             confidence=effective_score, needs_review=False,
             reason=reason, evidence=evidence,
+            matched_company_id=best_customer.company_id,
         )

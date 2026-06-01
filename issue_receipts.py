@@ -87,9 +87,10 @@ def _read_approved_rows(file_path: str) -> List[ApprovedRow]:
 
         approved.append(ApprovedRow(
             row_number=row_num,
-            matched_id=None,  # מזהה הלקוח ב-Maven נשלף בהמשך לפי השם
+            # מספר הלקוח במערכת - נקרא ישירות מהעמודה (אם קיים).
+            matched_id=_str(get(row, "מספר לקוח במערכת")),
             matched_name=_str(get(row, "לקוח מותאם ברשימה")),
-            company_id=_str(get(row, "ח.פ שזוהה")),
+            company_id=_str(get(row, "ח.פ שזוהה בשיק")),
             check_number=_str(get(row, "מספר שיק")),
             bank_name=_str(get(row, "בנק")),
             branch_number=_str(get(row, "סניף")),
@@ -217,10 +218,11 @@ def issue_receipts(file_path: str = config.OUTPUT_FILE, mode: str = "dry"):
             skipped += 1
             continue
 
-        # שולפים את מזהה הלקוח ב-Maven לפי השם (מקובץ הלקוחות).
-        customer_id = name_to_id.get((row.matched_name or "").strip())
+        # מזהה הלקוח: מעדיפים את מה שכבר בעמודה "מספר לקוח במערכת";
+        # אם חסר (למשל נמחק) - שולפים מקובץ הלקוחות לפי השם.
+        customer_id = row.matched_id or name_to_id.get((row.matched_name or "").strip())
         if not customer_id:
-            print(f"  ⚠️  דילוג - לא נמצא מזהה Maven ללקוח: {label}")
+            print(f"  ⚠️  דילוג - לא נמצא מספר לקוח: {label}")
             skipped += 1
             continue
 

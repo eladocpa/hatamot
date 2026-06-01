@@ -34,8 +34,10 @@ class ResultRow:
     status: str                    # מוכן / בדיקה ידנית / שיק שחזר
     maven_reference: Optional[str] # מספר האסמכתא מהשורה ב-Maven (88635 וכו')
     image_path: Optional[str]      # נתיב לצילום (לתיעוד)
-    company_id: Optional[str] = None  # ח.פ שזוהה על השיק
-    evidence: Optional[str] = None    # על מה התבססה ההתאמה (שם/ח.פ/סכום)
+    company_id: Optional[str] = None       # ח.פ שזוהה על השיק
+    evidence: Optional[str] = None         # על מה התבססה ההתאמה (שם/ח.פ/סכום)
+    matched_customer_id: Optional[str] = None   # מספר הלקוח במערכת (מהרשימה)
+    matched_company_id: Optional[str] = None    # ח.פ הלקוח מהרשימה (להשוואה)
 
 
 # הכותרות של העמודות, בסדר שביקשת.
@@ -43,8 +45,10 @@ HEADERS = [
     "לאשר?",            # <<< אתה ממלא: כתוב "כן" בשורות שברצונך להוציא להן קבלה
     "שם לקוח שזוהה",
     "לקוח מותאם ברשימה",
+    "מספר לקוח במערכת",  # המזהה של הלקוח כפי שמופיע ברשימה/Maven
     "רמת ודאות",
-    "ח.פ שזוהה",
+    "ח.פ שזוהה בשיק",    # ה-ח.פ שזוהה בצילום השיק
+    "ח.פ במערכת",        # ה-ח.פ של הלקוח המותאם, מהרשימה - להשוואה
     "מספר שיק",
     "בנק",
     "סניף",
@@ -92,8 +96,10 @@ def write_results(rows: List[ResultRow], output_file: str = config.OUTPUT_FILE):
             approve_default,
             r.detected_name or "",
             r.matched_name or "",
+            r.matched_customer_id or "",
             f"{r.confidence}%" if r.confidence else "",
             r.company_id or "",
+            r.matched_company_id or "",
             r.check_number or "",
             r.bank_name or "",
             r.branch_number or "",
@@ -118,7 +124,9 @@ def write_results(rows: List[ResultRow], output_file: str = config.OUTPUT_FILE):
             cell.alignment = Alignment(horizontal="center", vertical="center")
 
     # שלב 3: מרחיבים את העמודות שיהיה נוח לקרוא.
-    widths = [8, 22, 22, 10, 12, 12, 14, 8, 14, 14, 12, 20, 24, 14, 24]
+    # סדר: לאשר, שם שזוהה, לקוח מותאם, מספר לקוח, ודאות, ח.פ בשיק, ח.פ במערכת,
+    #      מספר שיק, בנק, סניף, חשבון, תאריך, סכום, סטטוס, בסיס, אסמכתא, צילום
+    widths = [8, 22, 22, 14, 9, 13, 13, 12, 12, 7, 13, 13, 11, 20, 24, 13, 22]
     for col_index, width in enumerate(widths, start=1):
         sheet.column_dimensions[
             openpyxl.utils.get_column_letter(col_index)

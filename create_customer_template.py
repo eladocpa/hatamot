@@ -32,7 +32,12 @@ def create_template():
     sheet.sheet_view.rightToLeft = True
 
     # שורת כותרות - חייבת להתאים לשמות שב-config.py
-    headers = [config.CUSTOMERS_NAME_COLUMN, config.CUSTOMERS_ID_COLUMN]
+    # עמודת ה-ח.פ אופציונלית אך מומלצת מאוד (משפרת מאוד את הדיוק).
+    headers = [
+        config.CUSTOMERS_NAME_COLUMN,
+        config.CUSTOMERS_ID_COLUMN,
+        config.CUSTOMERS_COMPANY_ID_COLUMN,  # "ח.פ"
+    ]
     fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
     for col_index, header in enumerate(headers, start=1):
         cell = sheet.cell(row=1, column=col_index, value=header)
@@ -41,11 +46,13 @@ def create_template():
         cell.alignment = Alignment(horizontal="center")
 
     # שתי שורות דוגמה - מחק אותן ומלא את הלקוחות שלך.
-    sheet.append(["ישראל ישראלי בע\"מ", "1001"])
-    sheet.append(["חברת אבן וסיד בע\"מ", "1002"])
+    # העמודה השלישית (ח.פ) - מלא אם ידוע; אפשר גם להשאיר ריק.
+    sheet.append(["ישראל ישראלי בע\"מ", "1001", "514111222"])
+    sheet.append(["חברת אבן וסיד בע\"מ", "1002", "514333444"])
 
     sheet.column_dimensions["A"].width = 30
     sheet.column_dimensions["B"].width = 15
+    sheet.column_dimensions["C"].width = 15
 
     workbook.save(config.CUSTOMERS_FILE)
     print(f"✅ נוצרה תבנית: '{config.CUSTOMERS_FILE}'")

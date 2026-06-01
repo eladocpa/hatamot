@@ -175,6 +175,8 @@ def _match_positive(reader, matcher, item: CheckItem, details) -> ResultRow:
         image_path=item.image_path,
         company_id=details.company_id,
         evidence=evidence_text,
+        matched_customer_id=match.matched_id,
+        matched_company_id=match.matched_company_id,
     )
 
 
