@@ -88,6 +88,14 @@ class MavenReceiptClient:
                 "(המפתח של הלקוח המיוצג שאתה מעבד)."
             )
 
+        # payment_date הוא שדה חובה. אם חסר לגמרי - עוצרים עם הסבר ברור,
+        # במקום לשלוח ערך ריק שייכשל בשרת.
+        if not request.due_date:
+            raise RuntimeError(
+                "חסר תאריך תשלום (payment_date). לא נקרא תאריך מהצילום "
+                "ולא נמצא תאריך תנועה. מלא תאריך פירעון בקובץ התוצאות והרץ שוב."
+            )
+
         # בונים את גוף הבקשה לפי התיעוד. כל השדות ב-lowercase.
         payload = {
             "api_key": self.api_key,
@@ -135,8 +143,10 @@ class MavenReceiptClient:
         data = response.json()
 
         # לפי התיעוד: status_code=0 פירושו הצלחה.
+        # ה-API עשוי להחזיר את הקוד כמספר (0) או כמחרוזת ("0") - מטפלים בשניהם.
         status_code = data.get("status_code")
-        if status_code != 0:
+        is_success = str(status_code).strip() == "0"
+        if not is_success:
             description = data.get("status_description", "שגיאה לא ידועה")
             raise RuntimeError(
                 f"Maven החזיר שגיאה (status_code={status_code}): {description}"

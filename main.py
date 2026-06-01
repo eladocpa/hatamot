@@ -126,6 +126,7 @@ def main():
                 image_path=cr.image_path,
                 row_reference=cr.row_reference,
                 row_amount=cr.row_amount,
+                row_date=cr.row_date,
                 is_bounced=cr.is_bounced,
             )
             for cr in check_rows

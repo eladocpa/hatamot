@@ -84,6 +84,9 @@ ROW_REFERENCE_PATTERN = re.compile(r"\((\d+)\)")
 # תופסת סימן מינוס (לפני או אחרי ה-₪) וגם פסיקים.
 ROW_AMOUNT_PATTERN = re.compile(r"(-?)\s*₪\s*(-?)([\d,]+(?:\.\d+)?)")
 
+# תבנית לחילוץ תאריך התנועה מהשורה, למשל "28/05/2026".
+ROW_DATE_PATTERN = re.compile(r"(\d{1,2}/\d{1,2}/\d{4})")
+
 # ==================================================================
 
 
@@ -94,6 +97,7 @@ class CheckRow:
     row_text: str                    # הטקסט המלא של השורה (לתיעוד)
     image_path: Optional[str]        # נתיב לקובץ הצילום שהורדנו (או None)
     row_reference: Optional[str] = None  # המספר בסוגריים מהשורה, למשל "88635"
+    row_date: Optional[str] = None       # תאריך התנועה מהשורה, למשל "28/05/2026"
     row_amount: Optional[str] = None     # הסכום מהשורה (כפי שמופיע בטבלה)
     is_bounced: bool = False             # שיק שחזר (סכום שלילי) - לא להוציא קבלה!
 
@@ -255,6 +259,9 @@ class BankMatchScraper:
 
             # מחלצים את הסכום מהשורה (לתיעוד ולגיבוי התאמה).
             row_amount, _ = _parse_amount(row_text)
+            # מחלצים את תאריך התנועה מהשורה (גיבוי לתאריך פירעון אם חסר בצילום).
+            date_match = ROW_DATE_PATTERN.search(row_text)
+            row_date = date_match.group(1) if date_match else None
             # שיק שחזר = שורת "החזרת שיק" (לפי התווית, לא לפי סימן הסכום).
             is_bounced = is_return
 
@@ -274,6 +281,7 @@ class BankMatchScraper:
                     image_path=image_path,
                     row_reference=row_reference,
                     row_amount=row_amount,
+                    row_date=row_date,
                     is_bounced=is_bounced,
                 )
             )
@@ -414,6 +422,7 @@ class BankMatchScraper:
                 "row_reference": r.row_reference,
                 "row_text": r.row_text,
                 "row_amount": r.row_amount,
+                "row_date": r.row_date,
                 "is_bounced": r.is_bounced,
             }
             for r in rows

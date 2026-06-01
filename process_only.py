@@ -73,6 +73,7 @@ def main():
             image_path=entry.get("image_path"),
             row_reference=entry.get("row_reference"),
             row_amount=entry.get("row_amount"),
+            row_date=entry.get("row_date"),
             is_bounced=entry.get("is_bounced", False),
         )
         for entry in entries

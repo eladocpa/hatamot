@@ -34,6 +34,7 @@ class CheckItem:
     image_path: Optional[str]
     row_reference: Optional[str] = None
     row_amount: Optional[str] = None
+    row_date: Optional[str] = None     # תאריך התנועה מהשורה (גיבוי לפירעון)
     is_bounced: bool = False
 
 
@@ -146,13 +147,17 @@ def _match_positive(reader, matcher, item: CheckItem, details) -> ResultRow:
             evidence="הצילום לא קריא",
         )
 
+    # תאריך פירעון: מעדיפים את מה שנקרא מהצילום; אם חסר -
+    # משתמשים בתאריך התנועה מהשורה (תמיד קיים). זה גם תאריך התשלום בקבלה.
+    due_date = details.due_date or item.row_date
+
     # התאמת לקוח (ח.פ + שם + סכום + תאריך).
     amount_for_match = details.amount or item.row_amount
     match = matcher.match(
         detected_name=details.drawer_name,
         company_id=details.company_id,
         amount=amount_for_match,
-        due_date=details.due_date,
+        due_date=due_date,
     )
     status = STATUS_READY if not match.needs_review else STATUS_REVIEW
     evidence_text = "; ".join(match.evidence) if match.evidence else match.reason
@@ -169,7 +174,7 @@ def _match_positive(reader, matcher, item: CheckItem, details) -> ResultRow:
         bank_name=details.bank_name,
         branch_number=details.branch_number,
         account_number=details.account_number,
-        due_date=details.due_date,
+        due_date=due_date,
         amount=details.amount or item.row_amount,
         status=status,
         maven_reference=item.row_reference,
