@@ -30,6 +30,8 @@ from typing import List, Optional
 import openpyxl
 
 import config
+from dotenv import load_dotenv
+
 from customer_matcher import load_customers
 from maven_api import MavenReceiptClient, ReceiptRequest
 
@@ -49,6 +51,7 @@ class ApprovedRow:
     row_number: int                  # מספר השורה באקסל (לתיעוד)
     matched_id: Optional[str]        # מזהה הלקוח ב-Maven
     matched_name: Optional[str]
+    company_id: Optional[str]        # ח.פ שזוהה (לשדה identification)
     check_number: Optional[str]
     bank_name: Optional[str]
     branch_number: Optional[str]
@@ -86,6 +89,7 @@ def _read_approved_rows(file_path: str) -> List[ApprovedRow]:
             row_number=row_num,
             matched_id=None,  # מזהה הלקוח ב-Maven נשלף בהמשך לפי השם
             matched_name=_str(get(row, "לקוח מותאם ברשימה")),
+            company_id=_str(get(row, "ח.פ שזוהה")),
             check_number=_str(get(row, "מספר שיק")),
             bank_name=_str(get(row, "בנק")),
             branch_number=_str(get(row, "סניף")),
@@ -138,16 +142,23 @@ def _append_to_log(row: ApprovedRow, receipt_id: str, dry_run: bool):
         ])
 
 
-def issue_receipts(file_path: str = config.OUTPUT_FILE, dry_run: bool = True):
+def issue_receipts(file_path: str = config.OUTPUT_FILE, mode: str = "dry"):
     """
     מוציא קבלות לכל השורות שסומנו 'כן' בקובץ האקסל.
-    dry_run=True (ברירת מחדל) = הרצה יבשה: מראה מה היה קורה, בלי לשלוח.
-    dry_run=False = הוצאה אמיתית של הקבלות.
+    שלוש רמות בטיחות:
+      mode="dry"  (ברירת מחדל) = הרצה יבשה: מראה מה היה קורה, בלי לפנות ל-Maven כלל.
+      mode="test" = שולח ל-Maven עם test=1: השרת בודק את הבקשה אך לא יוצר קבלה אמיתית.
+      mode="real" = הוצאה אמיתית של קבלות (test=0).
     """
-    mode = "🧪 הרצה יבשה (DRY RUN - לא נשלח כלום)" if dry_run \
-        else "🔴 הוצאה אמיתית של קבלות"
+    load_dotenv()  # טוען מפתחות API מקובץ .env
+
+    mode_labels = {
+        "dry": "🧪 הרצה יבשה (לא פונים ל-Maven כלל)",
+        "test": "🟡 מצב בדיקה (Maven בודק את הבקשה אך לא יוצר קבלה)",
+        "real": "🔴 הוצאה אמיתית של קבלות",
+    }
     print("=" * 60)
-    print(f"  הוצאת קבלות — {mode}")
+    print(f"  הוצאת קבלות — {mode_labels.get(mode, mode)}")
     print("=" * 60)
 
     if not os.path.exists(file_path):
@@ -172,8 +183,16 @@ def issue_receipts(file_path: str = config.OUTPUT_FILE, dry_run: bool = True):
     except Exception as e:
         print(f"⚠️  לא הצלחתי לטעון את קובץ הלקוחות למזהים: {e}")
 
+    # מצב יבש לא פונה ל-Maven, אז לא צריך מפתח. אחרת - בודקים שיש מפתח.
+    dry_run = (mode == "dry")
+    client = MavenReceiptClient(test_mode=(mode != "real"))
+    if not dry_run and not client.is_configured():
+        print("\n❌ אין מפתח API. הגדר בקובץ .env את המפתח של הלקוח המיוצג:")
+        print("      MAVEN_API_KEY=המפתח-של-הלקוח-המיוצג")
+        print("   (לכל לקוח מיוצג יש מפתח משלו - השתמש במפתח של החברה שעיבדת.)")
+        return
+
     issued_refs = _load_issued_references()
-    client = MavenReceiptClient()
     success, skipped, failed = 0, 0, 0
 
     for row in approved:
@@ -215,6 +234,7 @@ def issue_receipts(file_path: str = config.OUTPUT_FILE, dry_run: bool = True):
             account_number=row.account_number,
             due_date=row.due_date,
             maven_reference=row.maven_reference,
+            company_id=row.company_id,
         )
 
         try:
@@ -222,27 +242,41 @@ def issue_receipts(file_path: str = config.OUTPUT_FILE, dry_run: bool = True):
                 print(f"  🧪 [יבש] היה מוציא קבלה: {label}")
                 receipt_id = "DRY_RUN"
             else:
+                # mode=test -> נשלח עם test=1; mode=real -> test=0.
                 receipt_id = client.create_receipt(request)
-                print(f"  ✅ הוצאה קבלה ({receipt_id}): {label}")
-            _append_to_log(row, receipt_id, dry_run)
-            if row.maven_reference:
-                issued_refs.add(row.maven_reference)
+                tag = "(בדיקה)" if mode == "test" else ""
+                print(f"  ✅ נוצרה קבלה {tag} (מסמך {receipt_id}): {label}")
+            # רושמים ביומן רק הוצאה אמיתית (לא בדיקה/יבש), למניעת כפילויות.
+            if mode == "real":
+                _append_to_log(row, receipt_id, dry_run=False)
+                if row.maven_reference:
+                    issued_refs.add(row.maven_reference)
             success += 1
         except Exception as e:
             print(f"  ❌ נכשל: {label}\n       {e}")
             failed += 1
 
+    verb = {"dry": "(יבש)", "test": "(בדיקה)", "real": "הוצאו"}.get(mode, "")
     print("\n" + "=" * 60)
-    print(f"  סיכום: {success} {'(יבש)' if dry_run else 'הוצאו'}, "
-          f"{skipped} דולגו, {failed} נכשלו.")
+    print(f"  סיכום: {success} {verb}, {skipped} דולגו, {failed} נכשלו.")
     print("=" * 60)
-    if dry_run:
-        print("\n💡 זו הייתה הרצה יבשה. כדי להוציא קבלות באמת, הרץ:")
+    if mode == "dry":
+        print("\n💡 זו הייתה הרצה יבשה. השלב הבא המומלץ - מצב בדיקה מול Maven:")
+        print("      python issue_receipts.py --test")
+        print("   ורק כשהכל תקין, הוצאה אמיתית:")
+        print("      python issue_receipts.py --real")
+    elif mode == "test":
+        print("\n💡 הבקשות עברו בדיקה מול Maven. להוצאה אמיתית הרץ:")
         print("      python issue_receipts.py --real")
 
 
 if __name__ == "__main__":
     import sys
-    # ברירת מחדל: הרצה יבשה. רק עם הדגל --real מוציאים קבלות אמיתיות.
-    real = "--real" in sys.argv
-    issue_receipts(dry_run=not real)
+    # ברירת מחדל: הרצה יבשה. --test = בדיקה מול Maven. --real = הוצאה אמיתית.
+    if "--real" in sys.argv:
+        run_mode = "real"
+    elif "--test" in sys.argv:
+        run_mode = "test"
+    else:
+        run_mode = "dry"
+    issue_receipts(mode=run_mode)
