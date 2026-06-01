@@ -251,19 +251,17 @@ class BankMatchScraper:
             if row_reference:
                 seen_references.add(row_reference)
 
-            # מחלצים את הסכום ובודקים אם הוא שלילי = שיק שחזר.
+            # מחלצים את הסכום ובודקים אם הוא שלילי = פעולת החזרת שיק.
             row_amount, is_bounced = _parse_amount(row_text)
 
             check_number = len(results) + 1
             short_text = " ".join(row_text.split())[:70]
-            bounce_tag = "  ⛔ (שיק שחזר - סכום שלילי)" if is_bounced else ""
+            bounce_tag = "  ⛔ (החזרת שיק - סכום שלילי)" if is_bounced else ""
             print(f"\n  💳 שיק #{check_number}: {short_text}...{bounce_tag}")
 
-            # לשיק שחזר אין צורך להוריד צילום - ממילא לא מוציאים עליו קבלה.
-            if is_bounced:
-                image_path = None
-            else:
-                image_path = self._capture_check_image(row, check_number)
+            # מורידים צילום גם משורה שלילית! נצטרך לקרוא ממנו את מספר השיק
+            # כדי לזהות איזו הפקדה חיובית להחריג. (שורה שלילית = השיק שחזר.)
+            image_path = self._capture_check_image(row, check_number)
 
             results.append(
                 CheckRow(

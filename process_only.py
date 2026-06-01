@@ -19,7 +19,7 @@ from dotenv import load_dotenv
 
 import config
 from check_reader import CheckReader
-from check_processor import process_one
+from check_processor import CheckItem, process_all
 from customer_matcher import CustomerMatcher, load_customers, load_income_index
 from excel_writer import STATUS_READY, STATUS_BOUNCED, write_results
 # משתמשים בבדיקת המפתח החכמה שכבר כתבנו ב-main.
@@ -67,21 +67,17 @@ def main():
         print("   הרץ קודם את main.py כדי להוריד צילומים מ-Maven.")
         return
 
-    print(f"\n🤖 מעבד {len(entries)} פריטים עם Claude...")
     reader = CheckReader()
-    results = []
-
-    for idx, entry in enumerate(entries, start=1):
-        image_path = entry.get("image_path")
-        print(f"\n  [{idx}/{len(entries)}] {image_path or '(שיק שחזר)'}")
-        results.append(process_one(
-            reader=reader,
-            matcher=matcher,
-            image_path=image_path,
+    items = [
+        CheckItem(
+            image_path=entry.get("image_path"),
             row_reference=entry.get("row_reference"),
             row_amount=entry.get("row_amount"),
             is_bounced=entry.get("is_bounced", False),
-        ))
+        )
+        for entry in entries
+    ]
+    results = process_all(reader, matcher, items)
 
     if results:
         write_results(results)

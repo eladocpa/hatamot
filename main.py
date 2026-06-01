@@ -23,7 +23,7 @@ from dotenv import load_dotenv
 import config
 from bank_match_scraper import BankMatchScraper
 from check_reader import CheckReader
-from check_processor import process_one
+from check_processor import CheckItem, process_all
 from customer_matcher import CustomerMatcher, load_customers, load_income_index
 from excel_writer import (
     ResultRow, STATUS_READY, STATUS_REVIEW, STATUS_BOUNCED, write_results,
@@ -119,18 +119,18 @@ def main():
             print("\nℹ️  לא נמצאו תנועות 'הפקדת שיק' לא־מותאמות. אין מה לעבד.")
             return
 
-        # ---- שלב 5-6: קריאת כל שיק והתאמה ללקוח ----
-        print("\n🤖 שולח את הצילומים ל-Claude וקורא את הפרטים...")
-        for idx, check_row in enumerate(check_rows, start=1):
-            print(f"\n  [{idx}/{len(check_rows)}] מעבד שיק...")
-            results.append(process_one(
-                reader=reader,
-                matcher=matcher,
-                image_path=check_row.image_path,
-                row_reference=check_row.row_reference,
-                row_amount=check_row.row_amount,
-                is_bounced=check_row.is_bounced,
-            ))
+        # ---- שלב 5-6: קריאת כל השיקים (שני מעברים) והתאמה ללקוח ----
+        # מעבירים את כל השורות (כולל שליליות) כדי לזהות שיקים שחזרו.
+        items = [
+            CheckItem(
+                image_path=cr.image_path,
+                row_reference=cr.row_reference,
+                row_amount=cr.row_amount,
+                is_bounced=cr.is_bounced,
+            )
+            for cr in check_rows
+        ]
+        results = process_all(reader, matcher, items)
 
     finally:
         # תמיד סוגרים את הדפדפן, גם אם הייתה שגיאה.
