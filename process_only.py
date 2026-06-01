@@ -19,8 +19,9 @@ from dotenv import load_dotenv
 
 import config
 from check_reader import CheckReader
-from customer_matcher import CustomerMatcher, load_customers
-from excel_writer import ResultRow, STATUS_READY, STATUS_REVIEW, write_results
+from check_processor import process_one
+from customer_matcher import CustomerMatcher, load_customers, load_income_index
+from excel_writer import STATUS_READY, STATUS_BOUNCED, write_results
 # משתמשים בבדיקת המפתח החכמה שכבר כתבנו ב-main.
 from main import _load_api_key
 
@@ -38,7 +39,7 @@ def _load_index():
 
     # גיבוי: אין אינדקס - עוברים על כל הצילומים לפי שם הקובץ.
     images = sorted(glob.glob(os.path.join(config.IMAGES_DIR, "*.png")))
-    return [{"image_path": p, "row_reference": None, "row_text": ""} for p in images]
+    return [{"image_path": p} for p in images]
 
 
 def main():
@@ -49,13 +50,16 @@ def main():
     print("  🔁  עיבוד מחדש של צילומים קיימים (בלי דפדפן)")
     print("=" * 60)
 
-    # טעינת רשימת הלקוחות
+    # טעינת רשימת הלקוחות + תנועות הכנסה (אם קיימות)
     try:
         customers = load_customers()
     except FileNotFoundError:
         print(f"\n❌ לא נמצא קובץ הלקוחות '{config.CUSTOMERS_FILE}'.")
         return
-    matcher = CustomerMatcher(customers)
+    income_index = load_income_index()
+    if income_index:
+        print(f"   נטענו תנועות הכנסה ({len(income_index)} סכומים) לחיזוק ההתאמה.")
+    matcher = CustomerMatcher(customers, income_index)
 
     entries = _load_index()
     if not entries:
@@ -63,52 +67,30 @@ def main():
         print("   הרץ קודם את main.py כדי להוריד צילומים מ-Maven.")
         return
 
-    print(f"\n🤖 מעבד {len(entries)} צילומים עם Claude...")
+    print(f"\n🤖 מעבד {len(entries)} פריטים עם Claude...")
     reader = CheckReader()
     results = []
 
     for idx, entry in enumerate(entries, start=1):
         image_path = entry.get("image_path")
-        reference = entry.get("row_reference")
-        print(f"\n  [{idx}/{len(entries)}] {image_path}")
-
-        if not image_path or not os.path.exists(image_path):
-            print("      ⚠️  הצילום לא נמצא - מדלג.")
-            continue
-
-        details = reader.read_check(image_path)
-
-        if not details.is_readable:
-            results.append(ResultRow(
-                detected_name=details.drawer_name, matched_name=None, confidence=0,
-                check_number=details.check_number, bank_name=details.bank_name,
-                branch_number=details.branch_number, account_number=details.account_number,
-                due_date=details.due_date, amount=details.amount,
-                status=STATUS_REVIEW, maven_reference=reference, image_path=image_path,
-            ))
-            print("      🔶 הצילום לא קריא מספיק - דורש בדיקה ידנית.")
-            continue
-
-        match = matcher.match(details.drawer_name)
-        status = STATUS_READY if not match.needs_review else STATUS_REVIEW
-        results.append(ResultRow(
-            detected_name=details.drawer_name, matched_name=match.matched_name,
-            confidence=match.confidence, check_number=details.check_number,
-            bank_name=details.bank_name, branch_number=details.branch_number,
-            account_number=details.account_number, due_date=details.due_date,
-            amount=details.amount, status=status,
-            maven_reference=reference, image_path=image_path,
+        print(f"\n  [{idx}/{len(entries)}] {image_path or '(שיק שחזר)'}")
+        results.append(process_one(
+            reader=reader,
+            matcher=matcher,
+            image_path=image_path,
+            row_reference=entry.get("row_reference"),
+            row_amount=entry.get("row_amount"),
+            is_bounced=entry.get("is_bounced", False),
         ))
-        icon = "✅" if status == STATUS_READY else "🔶"
-        print(f"      {icon} {details.drawer_name} -> "
-              f"{match.matched_name or '?'} ({match.reason})")
 
     if results:
         write_results(results)
         ready = sum(1 for r in results if r.status == STATUS_READY)
+        bounced = sum(1 for r in results if r.status == STATUS_BOUNCED)
+        review = len(results) - ready - bounced
         print("\n" + "=" * 60)
         print(f"  סיכום: {len(results)} שיקים. ✅ מוכנים: {ready}  "
-              f"🔶 לבדיקה: {len(results) - ready}")
+              f"🔶 לבדיקה: {review}  ⛔ חזרו: {bounced}")
         print("=" * 60)
         print(f"\n👉 פתח את הקובץ '{config.OUTPUT_FILE}' ובדוק את הטבלה.")
 

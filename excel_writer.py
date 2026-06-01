@@ -31,9 +31,11 @@ class ResultRow:
     account_number: Optional[str]
     due_date: Optional[str]
     amount: Optional[str]
-    status: str                    # "מוכן לקבלה" / "דורש בדיקה ידנית"
+    status: str                    # מוכן / בדיקה ידנית / שיק שחזר
     maven_reference: Optional[str] # מספר האסמכתא מהשורה ב-Maven (88635 וכו')
     image_path: Optional[str]      # נתיב לצילום (לתיעוד)
+    company_id: Optional[str] = None  # ח.פ שזוהה על השיק
+    evidence: Optional[str] = None    # על מה התבססה ההתאמה (שם/ח.פ/סכום)
 
 
 # הכותרות של העמודות, בסדר שביקשת.
@@ -41,6 +43,7 @@ HEADERS = [
     "שם לקוח שזוהה",
     "לקוח מותאם ברשימה",
     "רמת ודאות",
+    "ח.פ שזוהה",
     "מספר שיק",
     "בנק",
     "סניף",
@@ -48,6 +51,7 @@ HEADERS = [
     "תאריך פירעון",
     "סכום",
     "סטטוס",
+    "בסיס ההתאמה",
     "אסמכתא Maven",
     "קובץ צילום",
 ]
@@ -55,10 +59,12 @@ HEADERS = [
 # צבעים לסטטוס
 GREEN_FILL = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
 YELLOW_FILL = PatternFill(start_color="FFEB9C", end_color="FFEB9C", fill_type="solid")
+RED_FILL = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
 HEADER_FILL = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
 
 STATUS_READY = "מוכן לקבלה"
 STATUS_REVIEW = "דורש בדיקה ידנית"
+STATUS_BOUNCED = "שיק שחזר - לא להוציא קבלה"
 
 
 def write_results(rows: List[ResultRow], output_file: str = config.OUTPUT_FILE):
@@ -82,6 +88,7 @@ def write_results(rows: List[ResultRow], output_file: str = config.OUTPUT_FILE):
             r.detected_name or "",
             r.matched_name or "",
             f"{r.confidence}%" if r.confidence else "",
+            r.company_id or "",
             r.check_number or "",
             r.bank_name or "",
             r.branch_number or "",
@@ -89,17 +96,24 @@ def write_results(rows: List[ResultRow], output_file: str = config.OUTPUT_FILE):
             r.due_date or "",
             r.amount or "",
             r.status,
+            r.evidence or "",
             r.maven_reference or "",
             r.image_path or "",
         ]
-        fill = GREEN_FILL if r.status == STATUS_READY else YELLOW_FILL
+        # צבע לפי הסטטוס: ירוק=מוכן, אדום=שיק שחזר, צהוב=בדיקה ידנית.
+        if r.status == STATUS_READY:
+            fill = GREEN_FILL
+        elif r.status == STATUS_BOUNCED:
+            fill = RED_FILL
+        else:
+            fill = YELLOW_FILL
         for col_index, value in enumerate(values, start=1):
             cell = sheet.cell(row=row_index, column=col_index, value=value)
             cell.fill = fill
             cell.alignment = Alignment(horizontal="center", vertical="center")
 
     # שלב 3: מרחיבים את העמודות שיהיה נוח לקרוא.
-    widths = [22, 22, 10, 12, 14, 8, 14, 14, 12, 18, 14, 24]
+    widths = [22, 22, 10, 12, 12, 14, 8, 14, 14, 12, 20, 24, 14, 24]
     for col_index, width in enumerate(widths, start=1):
         sheet.column_dimensions[
             openpyxl.utils.get_column_letter(col_index)

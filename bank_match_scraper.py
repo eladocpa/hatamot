@@ -80,6 +80,10 @@ ACTIVE_PAGE_SELECTORS = [
 # תבנית לחילוץ מספר האסמכתא מתוך טקסט השורה, למשל "הפקדת שיק - (88635)".
 ROW_REFERENCE_PATTERN = re.compile(r"\((\d+)\)")
 
+# תבנית לחילוץ הסכום מהשורה, למשל "₪1,503.66" או "₪-11,848".
+# תופסת סימן מינוס (לפני או אחרי ה-₪) וגם פסיקים.
+ROW_AMOUNT_PATTERN = re.compile(r"(-?)\s*₪\s*(-?)([\d,]+(?:\.\d+)?)")
+
 # ==================================================================
 
 
@@ -90,6 +94,23 @@ class CheckRow:
     row_text: str                    # הטקסט המלא של השורה (לתיעוד)
     image_path: Optional[str]        # נתיב לקובץ הצילום שהורדנו (או None)
     row_reference: Optional[str] = None  # המספר בסוגריים מהשורה, למשל "88635"
+    row_amount: Optional[str] = None     # הסכום מהשורה (כפי שמופיע בטבלה)
+    is_bounced: bool = False             # שיק שחזר (סכום שלילי) - לא להוציא קבלה!
+
+
+def _parse_amount(row_text: str):
+    """
+    מחלץ את הסכום מטקסט השורה ומחזיר (סכום_כמחרוזת, האם_שלילי).
+    סכום שלילי = שיק שחזר. למשל '₪-11,848' -> ('11848', True).
+    מחזיר (None, False) אם לא נמצא סכום.
+    """
+    match = ROW_AMOUNT_PATTERN.search(row_text)
+    if not match:
+        return None, False
+    sign_before, sign_inside, digits = match.groups()
+    is_negative = bool(sign_before) or bool(sign_inside)
+    amount = digits.replace(",", "")
+    return amount, is_negative
 
 
 class BankMatchScraper:
@@ -230,17 +251,28 @@ class BankMatchScraper:
             if row_reference:
                 seen_references.add(row_reference)
 
+            # מחלצים את הסכום ובודקים אם הוא שלילי = שיק שחזר.
+            row_amount, is_bounced = _parse_amount(row_text)
+
             check_number = len(results) + 1
             short_text = " ".join(row_text.split())[:70]
-            print(f"\n  💳 שיק #{check_number}: {short_text}...")
+            bounce_tag = "  ⛔ (שיק שחזר - סכום שלילי)" if is_bounced else ""
+            print(f"\n  💳 שיק #{check_number}: {short_text}...{bounce_tag}")
 
-            image_path = self._capture_check_image(row, check_number)
+            # לשיק שחזר אין צורך להוריד צילום - ממילא לא מוציאים עליו קבלה.
+            if is_bounced:
+                image_path = None
+            else:
+                image_path = self._capture_check_image(row, check_number)
+
             results.append(
                 CheckRow(
                     row_index=i,
                     row_text=row_text,
                     image_path=image_path,
                     row_reference=row_reference,
+                    row_amount=row_amount,
+                    is_bounced=is_bounced,
                 )
             )
             new_count += 1
@@ -379,6 +411,8 @@ class BankMatchScraper:
                 "image_path": r.image_path,
                 "row_reference": r.row_reference,
                 "row_text": r.row_text,
+                "row_amount": r.row_amount,
+                "is_bounced": r.is_bounced,
             }
             for r in rows
         ]
