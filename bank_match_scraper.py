@@ -196,6 +196,13 @@ class BankMatchScraper:
         seen_references = set()  # אסמכתאות שכבר עיבדנו (למניעת כפילויות)
         page_num = 1
 
+        # אבחון: מוודאים שזיהינו את פאנל הבנק (הצד עם 'הפקדת שיק'), כדי
+        # שהדפדוף יקרה בו ולא בפאנל היומן שלצדו.
+        if self._bank_scope() is not None:
+            print("   🧭 זוהה פאנל תנועות הבנק - הדפדוף יעוגן אליו.")
+        else:
+            print("   ⚠️  לא זוהה פאנל בנק נפרד - מדפדף על כל הדף (גיבוי).")
+
         while True:
             print(f"\n📄 ===== עמוד {page_num} =====")
             new_count = self._scan_current_page(results, seen_references)
@@ -228,7 +235,10 @@ class BankMatchScraper:
         סורק את העמוד הנוכחי: מאתר שורות 'הפקדת שיק', מוריד צילום לכל אחת,
         ומוסיף ל-results. מדלג על אסמכתאות שכבר ראינו. מחזיר כמה חדשות נמצאו.
         """
-        rows = self._page.locator(ROW_SELECTOR)
+        # מצמצמים לפאנל תנועות הבנק בלבד (הצד עם שורות 'הפקדת שיק'),
+        # כדי לא לסרוק בטעות את פאנל היומן שלצדו.
+        scope = self._bank_scope() or self._page
+        rows = scope.locator(ROW_SELECTOR)
         total_rows = rows.count()
         new_count = 0
         page_refs = []   # כל האסמכתאות של 'הפקדת שיק' בעמוד (לאבחון)
@@ -299,14 +309,43 @@ class BankMatchScraper:
 
         return new_count
 
-    def _data_signature(self) -> str:
+    def _bank_scope(self):
+        """
+        מאתר ומחזיר locator לפאנל *תנועות הבנק* - הצד שמכיל את שורות
+        'הפקדת שיק'. במסך התאמות הבנק יש שני פאנלים זה לצד זה (בנק מול יומן),
+        ולכל אחד אזור דפדוף משלו. בלי עיגון לפאנל הבנק, לחיצת "עמוד הבא"
+        עלולה לדפדף את פאנל היומן במקום - וזה בדיוק הבאג.
+
+        השיטה: מוצאים את האלמנט הקרוב ביותר שמכיל את התווית 'הפקדת שיק',
+        ועולים לאב הקרוב ביותר שמכיל בתוכו גם אזור דפדוף. אותו אב = פאנל הבנק.
+        אם לא מצליחים (מבנה אתר שונה) - מחזירים None, והקוד נופל חזרה
+        להתנהגות על כל הדף.
+        """
+        label = config.CHECK_DEPOSIT_LABEL
+        xpath = (
+            "xpath=(//*[contains(normalize-space(text()),'" + label + "')])[1]"
+            "/ancestor::*[.//*[contains(@class,'paginate_button') or "
+            "contains(@class,'pagination') or contains(@class,'paginat') or "
+            "contains(@class,'dataScroller') or contains(@class,'scroller')]][1]"
+        )
+        try:
+            cand = self._page.locator(xpath).first
+            if cand.count() > 0:
+                return cand
+        except Exception:
+            pass
+        return None
+
+    def _data_signature(self, scope=None) -> str:
         """
         מחזיר 'טביעת אצבע' של *שורות הנתונים* בעמוד (שורות שמכילות תאריך).
         אלה השורות שמתחלפות בין עמודים, אז זו הדרך האמינה לדעת אם
         תוכן העמוד באמת התעדכן (ולא רק מספר העמוד באזור הדפדוף).
+        מצומצם לפאנל הבנק (אם נמסר), כדי ששינוי בפאנל היומן לא יטעה אותנו.
         """
         try:
-            rows = self._page.locator(ROW_SELECTOR)
+            container = scope or self._page
+            rows = container.locator(ROW_SELECTOR)
             total = rows.count()
             parts = []
             for i in range(total):
@@ -322,10 +361,11 @@ class BankMatchScraper:
         except Exception:
             return ""
 
-    def _find_paginator(self):
-        """מאתר את מיכל אזור הדפדוף. מחזיר locator או None."""
+    def _find_paginator(self, scope=None):
+        """מאתר את מיכל אזור הדפדוף (בתוך פאנל הבנק אם נמסר). מחזיר locator או None."""
+        container = scope or self._page
         for selector in PAGINATOR_CONTAINER_SELECTORS:
-            cand = self._page.locator(selector).first
+            cand = container.locator(selector).first
             try:
                 if cand.count() > 0 and cand.is_visible():
                     return cand
@@ -340,12 +380,16 @@ class BankMatchScraper:
         (2) ואם לא נמצא - ללחוץ על חץ "הבא".
         מחזיר True אם עברנו לעמוד חדש, או False אם הגענו לסוף.
         """
-        before = self._data_signature()
+        # מעגנים הכל לפאנל הבנק - כך שלא נדפדף בטעות את פאנל היומן שלצדו.
+        bank_scope = self._bank_scope()
+        click_scope = bank_scope if bank_scope is not None else self._page
+        before = self._data_signature(bank_scope)
         clicked = False
 
         # אסטרטגיה 1: לחיצה על כפתור "הבא" (החץ) - מדויק לפי מבנה האתר.
+        # מחפשים את הכפתור *בתוך פאנל הבנק* בלבד.
         for selector in NEXT_PAGE_SELECTORS:
-            cand = self._page.locator(selector).first
+            cand = click_scope.locator(selector).first
             try:
                 if cand.count() > 0 and cand.is_visible():
                     cand.click(timeout=3000)
@@ -356,8 +400,8 @@ class BankMatchScraper:
 
         # אסטרטגיה 2: גיבוי - לחיצה ישירה על מספר העמוד הבא.
         if not clicked:
-            paginator = self._find_paginator()
-            scope = paginator if paginator is not None else self._page
+            paginator = self._find_paginator(bank_scope)
+            scope = paginator if paginator is not None else click_scope
             try:
                 number_btn = scope.get_by_text(str(target_page), exact=True).first
                 if number_btn.count() > 0 and number_btn.is_visible():
@@ -375,7 +419,7 @@ class BankMatchScraper:
         # זה מונע סריקה של תוכן ישן לפני שה-AJAX סיים לטעון את העמוד החדש.
         deadline = time.time() + 10
         while time.time() < deadline:
-            now = self._data_signature()
+            now = self._data_signature(bank_scope)
             if now and now != before:
                 time.sleep(0.5)  # רגע קטן נוסף שהכל יתייצב
                 return True
