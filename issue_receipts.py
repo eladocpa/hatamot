@@ -57,6 +57,7 @@ class ApprovedRow:
     branch_number: Optional[str]
     account_number: Optional[str]
     due_date: Optional[str]
+    deposit_date: Optional[str]      # תאריך ההפקדה מדף הבנק = תאריך הקבלה
     amount: Optional[str]
     maven_reference: Optional[str]
     status: str
@@ -96,6 +97,7 @@ def _read_approved_rows(file_path: str) -> List[ApprovedRow]:
             branch_number=_str(get(row, "סניף")),
             account_number=_str(get(row, "חשבון")),
             due_date=_str(get(row, "תאריך פירעון")),
+            deposit_date=_str(get(row, "תאריך הפקדה")),
             amount=_str(get(row, "סכום")),
             maven_reference=_str(get(row, "אסמכתא Maven")),
             status=_str(get(row, "סטטוס")) or "",
@@ -235,6 +237,7 @@ def issue_receipts(file_path: str = config.OUTPUT_FILE, mode: str = "dry"):
             branch_number=row.branch_number,
             account_number=row.account_number,
             due_date=row.due_date,
+            payment_date=row.deposit_date,  # תאריך הקבלה = תאריך ההפקדה מדף הבנק
             maven_reference=row.maven_reference,
             company_id=row.company_id,
         )

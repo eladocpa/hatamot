@@ -34,6 +34,7 @@ class ResultRow:
     status: str                    # מוכן / בדיקה ידנית / שיק שחזר
     maven_reference: Optional[str] # מספר האסמכתא מהשורה ב-Maven (88635 וכו')
     image_path: Optional[str]      # נתיב לצילום (לתיעוד)
+    deposit_date: Optional[str] = None     # תאריך ההפקדה מדף הבנק = תאריך הקבלה
     company_id: Optional[str] = None       # ח.פ שזוהה על השיק
     evidence: Optional[str] = None         # על מה התבססה ההתאמה (שם/ח.פ/סכום)
     matched_customer_id: Optional[str] = None   # מספר הלקוח במערכת (מהרשימה)
@@ -53,6 +54,7 @@ HEADERS = [
     "בנק",
     "סניף",
     "חשבון",
+    "תאריך הפקדה",      # תאריך ההפקדה מדף הבנק - זהו תאריך הקבלה שתוצא
     "תאריך פירעון",
     "סכום",
     "סטטוס",
@@ -104,6 +106,7 @@ def write_results(rows: List[ResultRow], output_file: str = config.OUTPUT_FILE):
             r.bank_name or "",
             r.branch_number or "",
             r.account_number or "",
+            r.deposit_date or "",
             r.due_date or "",
             r.amount or "",
             r.status,
@@ -125,8 +128,9 @@ def write_results(rows: List[ResultRow], output_file: str = config.OUTPUT_FILE):
 
     # שלב 3: מרחיבים את העמודות שיהיה נוח לקרוא.
     # סדר: לאשר, שם שזוהה, לקוח מותאם, מספר לקוח, ודאות, ח.פ בשיק, ח.פ במערכת,
-    #      מספר שיק, בנק, סניף, חשבון, תאריך, סכום, סטטוס, בסיס, אסמכתא, צילום
-    widths = [8, 22, 22, 14, 9, 13, 13, 12, 12, 7, 13, 13, 11, 20, 24, 13, 22]
+    #      מספר שיק, בנק, סניף, חשבון, תאריך הפקדה, תאריך פירעון, סכום, סטטוס,
+    #      בסיס, אסמכתא, צילום
+    widths = [8, 22, 22, 14, 9, 13, 13, 12, 12, 7, 13, 13, 13, 11, 20, 24, 13, 22]
     for col_index, width in enumerate(widths, start=1):
         sheet.column_dimensions[
             openpyxl.utils.get_column_letter(col_index)

@@ -131,7 +131,8 @@ def _match_positive(reader, matcher, item: CheckItem, details) -> ResultRow:
             check_number=None, bank_name=None, branch_number=None,
             account_number=None, due_date=None, amount=item.row_amount,
             status=STATUS_REVIEW, maven_reference=item.row_reference,
-            image_path=item.image_path, evidence="לא הורד צילום של השיק",
+            image_path=item.image_path, deposit_date=item.row_date,
+            evidence="לא הורד צילום של השיק",
         )
 
     # צילום לא קריא -> בדיקה ידנית.
@@ -143,7 +144,8 @@ def _match_positive(reader, matcher, item: CheckItem, details) -> ResultRow:
             branch_number=details.branch_number, account_number=details.account_number,
             due_date=details.due_date, amount=details.amount or item.row_amount,
             status=STATUS_REVIEW, maven_reference=item.row_reference,
-            image_path=item.image_path, company_id=details.company_id,
+            image_path=item.image_path, deposit_date=item.row_date,
+            company_id=details.company_id,
             evidence="הצילום לא קריא",
         )
 
@@ -179,6 +181,7 @@ def _match_positive(reader, matcher, item: CheckItem, details) -> ResultRow:
         status=status,
         maven_reference=item.row_reference,
         image_path=item.image_path,
+        deposit_date=item.row_date,
         company_id=details.company_id,
         evidence=evidence_text,
         matched_customer_id=match.matched_id,
@@ -199,6 +202,7 @@ def _bounced_action_row(item: CheckItem, details) -> ResultRow:
         amount=item.row_amount,
         status=STATUS_BOUNCED, maven_reference=item.row_reference,
         image_path=item.image_path,
+        deposit_date=item.row_date,
         company_id=details.company_id if details else None,
         evidence="פעולת החזרת שיק (תנועה שלילית) - לתיעוד בלבד",
     )

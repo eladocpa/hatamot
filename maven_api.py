@@ -45,9 +45,10 @@ class ReceiptRequest:
     bank_name: Optional[str]
     branch_number: Optional[str]
     account_number: Optional[str]
-    due_date: Optional[str]
+    due_date: Optional[str]           # תאריך פירעון השיק (לתיעוד)
     maven_reference: Optional[str]    # אסמכתא - תשמש כ-doc_id למניעת כפילויות
     company_id: Optional[str] = None  # ח.פ הלקוח (לשדה identification)
+    payment_date: Optional[str] = None  # תאריך הקבלה (תאריך ההפקדה מדף הבנק)
 
 
 def _clean_amount(amount: str) -> float:
@@ -88,12 +89,16 @@ class MavenReceiptClient:
                 "(המפתח של הלקוח המיוצג שאתה מעבד)."
             )
 
+        # תאריך הקבלה = תאריך ההפקדה מדף הבנק. אם משום מה חסר -
+        # נופלים חזרה לתאריך הפירעון, כדי לא לאבד הוצאת קבלה.
+        payment_date = request.payment_date or request.due_date
+
         # payment_date הוא שדה חובה. אם חסר לגמרי - עוצרים עם הסבר ברור,
         # במקום לשלוח ערך ריק שייכשל בשרת.
-        if not request.due_date:
+        if not payment_date:
             raise RuntimeError(
-                "חסר תאריך תשלום (payment_date). לא נקרא תאריך מהצילום "
-                "ולא נמצא תאריך תנועה. מלא תאריך פירעון בקובץ התוצאות והרץ שוב."
+                "חסר תאריך תשלום (payment_date). לא נמצא תאריך הפקדה "
+                "ולא תאריך פירעון. מלא תאריך הפקדה בקובץ התוצאות והרץ שוב."
             )
 
         # בונים את גוף הבקשה לפי התיעוד. כל השדות ב-lowercase.
@@ -107,7 +112,7 @@ class MavenReceiptClient:
             },
             "payments": [
                 {
-                    "payment_date": request.due_date or "",
+                    "payment_date": payment_date or "",
                     "payment_type": PAYMENT_TYPE_CHECK,
                     "amount": _clean_amount(request.amount),
                     "bank": request.bank_name or "",
