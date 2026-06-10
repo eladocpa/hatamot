@@ -236,8 +236,8 @@ def issue_receipts(file_path: str = config.OUTPUT_FILE, mode: str = "dry"):
             bank_name=row.bank_name,
             branch_number=row.branch_number,
             account_number=row.account_number,
-            due_date=row.due_date,
-            payment_date=row.deposit_date,  # תאריך הקבלה = תאריך ההפקדה מדף הבנק
+            due_date=row.due_date,             # תאריך פירעון השיק -> payment_date בפרטי השיק
+            document_date=row.deposit_date,    # תאריך הקבלה (תאריך המסמך) = תאריך ההפקדה מדף הבנק
             maven_reference=row.maven_reference,
             company_id=row.company_id,
         )

@@ -45,10 +45,10 @@ class ReceiptRequest:
     bank_name: Optional[str]
     branch_number: Optional[str]
     account_number: Optional[str]
-    due_date: Optional[str]           # תאריך פירעון השיק (לתיעוד)
+    due_date: Optional[str]           # תאריך פירעון השיק -> payments[].payment_date
     maven_reference: Optional[str]    # אסמכתא - תשמש כ-doc_id למניעת כפילויות
     company_id: Optional[str] = None  # ח.פ הלקוח (לשדה identification)
-    payment_date: Optional[str] = None  # תאריך הקבלה (תאריך ההפקדה מדף הבנק)
+    document_date: Optional[str] = None  # תאריך הקבלה (תאריך ההפקדה מדף הבנק) -> document_date
 
 
 def _clean_amount(amount: str) -> float:
@@ -89,16 +89,17 @@ class MavenReceiptClient:
                 "(המפתח של הלקוח המיוצג שאתה מעבד)."
             )
 
-        # תאריך הקבלה = תאריך ההפקדה מדף הבנק. אם משום מה חסר -
-        # נופלים חזרה לתאריך הפירעון, כדי לא לאבד הוצאת קבלה.
-        payment_date = request.payment_date or request.due_date
-
-        # payment_date הוא שדה חובה. אם חסר לגמרי - עוצרים עם הסבר ברור,
-        # במקום לשלוח ערך ריק שייכשל בשרת.
+        # שני תאריכים נפרדים בקבלה:
+        #  1. payment_date (בתוך פרטי השיק) = תאריך *פירעון* השיק.
+        #  2. document_date (תאריך המסמך) = תאריך *הקבלה* = תאריך ההפקדה מדף הבנק.
+        #
+        # payment_date הוא שדה חובה ב-API. מעדיפים את תאריך הפירעון; אם משום מה
+        # לא נקרא - נופלים חזרה לתאריך ההפקדה, כדי לא לאבד הוצאת קבלה.
+        payment_date = request.due_date or request.document_date
         if not payment_date:
             raise RuntimeError(
-                "חסר תאריך תשלום (payment_date). לא נמצא תאריך הפקדה "
-                "ולא תאריך פירעון. מלא תאריך הפקדה בקובץ התוצאות והרץ שוב."
+                "חסר תאריך לשיק (payment_date). לא נמצא תאריך פירעון "
+                "ולא תאריך הפקדה. מלא תאריך בקובץ התוצאות והרץ שוב."
             )
 
         # בונים את גוף הבקשה לפי התיעוד. כל השדות ב-lowercase.
@@ -122,6 +123,11 @@ class MavenReceiptClient:
                 }
             ],
         }
+
+        # תאריך המסמך (תאריך הקבלה) = תאריך ההפקדה מדף הבנק.
+        # שולחים רק אם קיים; אחרת Maven מציב את היום אוטומטית.
+        if request.document_date:
+            payload["document_date"] = request.document_date
 
         # ח.פ הלקוח (אם זוהה) -> שדה identification.
         if request.company_id:
