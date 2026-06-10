@@ -232,6 +232,14 @@ def issue_receipts(file_path: str = config.OUTPUT_FILE, mode: str = "dry"):
             skipped += 1
             continue
 
+        # אזהרה (לא חוסמת): אם חסר תאריך הפקדה, תאריך המסמך ב-Maven ייפול
+        # לתאריך *היום* במקום לתאריך ההפקדה. בדרך כלל זה אומר שקובץ האקסל
+        # ישן (נוצר לפני שנוספה עמודת "תאריך הפקדה") - כדאי ליצור אותו מחדש.
+        if not row.deposit_date:
+            print(f"  ⚠️  שים לב - אין 'תאריך הפקדה' בשורה זו: {label}\n"
+                  f"       תאריך המסמך ב-Maven ייקבע ל-*היום*. "
+                  f"אם רצית את תאריך ההפקדה - צור מחדש את האקסל (python main.py).")
+
         request = ReceiptRequest(
             customer_name=row.matched_name,
             customer_id=customer_id,

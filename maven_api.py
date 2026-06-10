@@ -143,6 +143,17 @@ class MavenReceiptClient:
         if self.contact_phone:
             payload["contact_phone"] = self.contact_phone
 
+        # מצב אבחון: הגדר MAVEN_DEBUG=1 בקובץ .env כדי להדפיס את גוף הבקשה
+        # המלא שנשלח ל-Maven (כולל document_date) ואת התשובה המלאה. עוזר לוודא
+        # בדיוק מה נשלח ומה השרת החזיר - בלי לנחש.
+        debug = os.environ.get("MAVEN_DEBUG", "").strip() in ("1", "true", "True")
+        if debug:
+            import json as _json
+            safe = dict(payload)
+            safe["api_key"] = "***"  # לא מדפיסים את המפתח
+            print("      🐞 גוף הבקשה ל-Maven:")
+            print("      " + _json.dumps(safe, ensure_ascii=False))
+
         # שולחים את הבקשה.
         response = requests.post(
             ADD_DOCUMENT_URL,
@@ -152,6 +163,11 @@ class MavenReceiptClient:
         )
         response.raise_for_status()
         data = response.json()
+
+        if debug:
+            import json as _json
+            print("      🐞 תשובת Maven:")
+            print("      " + _json.dumps(data, ensure_ascii=False))
 
         # לפי התיעוד: status_code=0 פירושו הצלחה.
         # ה-API עשוי להחזיר את הקוד כמספר (0) או כמחרוזת ("0") - מטפלים בשניהם.
