@@ -19,6 +19,7 @@ https://www.invoice-maven.co.il/support/api/add-document/
 """
 
 import os
+import re
 from dataclasses import dataclass
 from typing import Optional
 
@@ -55,6 +56,24 @@ def _clean_amount(amount: str) -> float:
     """ממיר סכום מחרוזת (אולי עם ₪/פסיקים) למספר."""
     text = str(amount).replace("₪", "").replace(",", "").strip()
     return float(text)
+
+
+def _is_success(data: dict) -> bool:
+    """האם תשובת Maven מסמנת הצלחה? (status_code=0, כמספר או כמחרוזת)."""
+    return str(data.get("status_code")).strip() == "0"
+
+
+def _extract_min_allowed_date(description: str) -> Optional[str]:
+    """
+    מחלץ את התאריך המוקדם המותר מתוך הודעת השגיאה הכרונולוגית של Maven:
+      "לא ניתן לבחור תאריך המוקדם יותר מהתאריך האחרון בו יצרתם
+       מסמך מסוג זה (10/06/2026)."
+    מחזיר את התאריך (dd/MM/yyyy) או None אם זו שגיאה אחרת.
+    """
+    if "מוקדם" not in description or "תאריך" not in description:
+        return None
+    match = re.search(r"\((\d{1,2}/\d{1,2}/\d{4})\)", description)
+    return match.group(1) if match else None
 
 
 class MavenReceiptClient:
@@ -146,6 +165,34 @@ class MavenReceiptClient:
         # מצב אבחון: הגדר MAVEN_DEBUG=1 בקובץ .env כדי להדפיס את גוף הבקשה
         # המלא שנשלח ל-Maven (כולל document_date) ואת התשובה המלאה. עוזר לוודא
         # בדיוק מה נשלח ומה השרת החזיר - בלי לנחש.
+        data = self._send(payload)
+
+        # התאמה אוטומטית של תאריך המסמך: Maven לא מאפשר תאריך מסמך מוקדם
+        # מהמסמך האחרון מאותו סוג (כלל כרונולוגי של הוראות ניהול ספרים).
+        # אם נדחינו בגלל זה - מחלצים מהודעת השגיאה את התאריך המוקדם המותר,
+        # ושולחים שוב עם התאריך הזה. ההתאמה היא תמיד *קדימה* בזמן בלבד.
+        if not _is_success(data) and payload.get("document_date"):
+            description = str(data.get("status_description", ""))
+            min_date = _extract_min_allowed_date(description)
+            if min_date:
+                print(f"      ⚠️  תאריך ההפקדה ({payload['document_date']}) מוקדם "
+                      f"מהמותר ב-Maven. הקבלה תצא בתאריך המוקדם המותר: {min_date}.")
+                payload["document_date"] = min_date
+                data = self._send(payload)
+
+        # לפי התיעוד: status_code=0 פירושו הצלחה.
+        if not _is_success(data):
+            status_code = data.get("status_code")
+            description = data.get("status_description", "שגיאה לא ידועה")
+            raise RuntimeError(
+                f"Maven החזיר שגיאה (status_code={status_code}): {description}"
+            )
+
+        # מחזירים את מספר המסמך שנוצר.
+        return str(data.get("doc_no", "?"))
+
+    def _send(self, payload: dict) -> dict:
+        """שולח את הבקשה ל-Maven ומחזיר את התשובה כ-dict (כולל הדפסות אבחון)."""
         debug = os.environ.get("MAVEN_DEBUG", "").strip() in ("1", "true", "True")
         if debug:
             import json as _json
@@ -154,7 +201,6 @@ class MavenReceiptClient:
             print("      🐞 גוף הבקשה ל-Maven:")
             print("      " + _json.dumps(safe, ensure_ascii=False))
 
-        # שולחים את הבקשה.
         response = requests.post(
             ADD_DOCUMENT_URL,
             json=payload,
@@ -168,16 +214,4 @@ class MavenReceiptClient:
             import json as _json
             print("      🐞 תשובת Maven:")
             print("      " + _json.dumps(data, ensure_ascii=False))
-
-        # לפי התיעוד: status_code=0 פירושו הצלחה.
-        # ה-API עשוי להחזיר את הקוד כמספר (0) או כמחרוזת ("0") - מטפלים בשניהם.
-        status_code = data.get("status_code")
-        is_success = str(status_code).strip() == "0"
-        if not is_success:
-            description = data.get("status_description", "שגיאה לא ידועה")
-            raise RuntimeError(
-                f"Maven החזיר שגיאה (status_code={status_code}): {description}"
-            )
-
-        # מחזירים את מספר המסמך שנוצר.
-        return str(data.get("doc_no", "?"))
+        return data
