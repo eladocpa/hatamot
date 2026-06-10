@@ -24,7 +24,7 @@
 import csv
 import os
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 from typing import List, Optional
 
 import openpyxl
@@ -32,7 +32,7 @@ import openpyxl
 import config
 from dotenv import load_dotenv
 
-from customer_matcher import load_customers
+from customer_matcher import load_customers, _parse_date
 from maven_api import MavenReceiptClient, ReceiptRequest
 
 
@@ -175,7 +175,11 @@ def issue_receipts(file_path: str = config.OUTPUT_FILE, mode: str = "dry"):
         print("   פתח את הקובץ, סמן 'כן' בשורות הרצויות, ושמור.")
         return
 
-    print(f"\nנמצאו {len(approved)} שורות מאושרות.")
+    # מיון לפי תאריך ההפקדה (= תאריך המסמך) בסדר עולה. Maven דורש סדר
+    # כרונולוגי של תאריכי מסמך באותו סוג מסמך, אז מוציאים מהמוקדם למאוחר.
+    # שורות בלי תאריך תקין נשארות בסוף (מיון יציב שומר על סדרן המקורי).
+    approved.sort(key=lambda r: _parse_date(r.deposit_date) or date.max)
+    print(f"\nנמצאו {len(approved)} שורות מאושרות (ממוינות לפי תאריך הפקדה, מהמוקדם למאוחר).")
 
     # בונים מילון שם-לקוח -> מזהה Maven, מתוך קובץ הלקוחות,
     # כדי שנשלח ל-API את מזהה הלקוח הנכון (ולא רק את השם).
