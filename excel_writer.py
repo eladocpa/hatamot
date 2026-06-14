@@ -201,9 +201,11 @@ def _add_customer_dropdown(workbook, sheet, num_rows: int, customers):
     last_row = num_rows + 1  # +1 בגלל שורת הכותרת
     dv = DataValidation(
         type="list",
-        formula1=f"={CUSTOMER_NAMES_RANGE}",
+        formula1=CUSTOMER_NAMES_RANGE,  # שם הטווח, בלי '=' (אחרת Excel בולע את הרשימה)
         allow_blank=True,
+        showDropDown=False,  # False = להציג את חץ הרשימה (סמנטיקה הפוכה ב-OOXML)
     )
+    dv.showInputMessage = True
     dv.promptTitle = "לקוח מותאם"
     dv.prompt = "בחר לקוח מהרשימה הנפתחת (להתאמה ידנית)"
     dv.errorTitle = "ערך לא ברשימה"
