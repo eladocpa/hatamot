@@ -21,8 +21,8 @@ from openpyxl.workbook.defined_name import DefinedName
 import config
 
 
-# שם הגיליון המוסתר שמחזיק את רשימת הלקוחות (מקור לרשימה הנפתחת).
-CUSTOMER_SHEET_TITLE = "רשימת_לקוחות"
+# שם גיליון הלקוחות הגלוי (מקור לרשימה הנפתחת + חיפוש עם מסנן).
+CUSTOMER_SHEET_TITLE = "לקוחות"
 CUSTOMER_NAMES_RANGE = "CustomerNames"
 
 
@@ -171,27 +171,37 @@ def write_results(rows: List[ResultRow], output_file: str = config.OUTPUT_FILE,
 
 def _add_customer_dropdown(workbook, sheet, num_rows: int, customers):
     """
-    מוסיף רשימה נפתחת (data validation) בעמודת "לקוח מותאם ברשימה",
-    שמקורה ברשימת הלקוחות. כך אפשר לבחור לקוח ידנית בשורות לבירור,
-    ואז הקבלה תופק על שם הלקוח שנבחר.
+    מוסיף שתי דרכים להתאמה ידנית של לקוח:
 
-    המימוש: גיליון מוסתר עם שמות הלקוחות + טווח בעל-שם (named range)
-    שאליו מצביעה הרשימה הנפתחת. בחירה מהרשימה מבטיחה שם תקין מהמערכת.
+    1. רשימה נפתחת (data validation) בעמודת "לקוח מותאם ברשימה" - לבחירה מהירה.
+    2. גיליון "לקוחות" *גלוי* עם מסנן (AutoFilter) - שם יש תיבת חיפוש לפי שם
+       (עובד גם ב-Office 2016/2019/2021). מחפשים שם, קוראים את המספר, ומקלידים
+       אותו בעמודת "מספר לקוח במערכת" - ההפקה תזהה את הלקוח לפי המספר.
+
+    הרשימה ממוינת לפי א״ב. הגיליון מכיל שם / מספר לקוח / ח.פ.
     """
     if not customers:
         return
 
-    # גיליון מוסתר עם שמות הלקוחות (עמודה A) והמזהים שלהם (עמודה B, לעיון).
-    # ממיינים לפי א״ב כדי שיהיה קל לאתר שם ברשימה הנפתחת (גם בלי חיפוש).
     sorted_customers = sorted(customers, key=lambda c: (c.name or "").strip())
-    cust_sheet = workbook.create_sheet(title=CUSTOMER_SHEET_TITLE)
-    for i, c in enumerate(sorted_customers, start=1):
-        cust_sheet.cell(row=i, column=1, value=c.name)
-        cust_sheet.cell(row=i, column=2, value=c.customer_id)
-    cust_sheet.sheet_state = "hidden"
 
-    # טווח בעל-שם לשמות הלקוחות - מקור הרשימה הנפתחת.
-    names_ref = f"'{CUSTOMER_SHEET_TITLE}'!$A$1:$A${len(sorted_customers)}"
+    # גיליון "לקוחות" גלוי, עם כותרות ומסנן (AutoFilter) שכולל תיבת חיפוש.
+    cust_sheet = workbook.create_sheet(title=CUSTOMER_SHEET_TITLE)
+    cust_sheet.sheet_view.rightToLeft = True
+    cust_sheet.append(["שם לקוח", "מספר לקוח", "ח.פ"])
+    for cell in cust_sheet[1]:
+        cell.font = Font(bold=True, color="FFFFFF")
+        cell.fill = HEADER_FILL
+    for c in sorted_customers:
+        cust_sheet.append([c.name, c.customer_id, c.company_id or ""])
+    last = len(sorted_customers) + 1  # כולל שורת הכותרת
+    cust_sheet.auto_filter.ref = f"A1:C{last}"
+    cust_sheet.column_dimensions["A"].width = 32
+    cust_sheet.column_dimensions["B"].width = 14
+    cust_sheet.column_dimensions["C"].width = 14
+
+    # טווח בעל-שם לשמות הלקוחות (בלי הכותרת) - מקור הרשימה הנפתחת.
+    names_ref = f"'{CUSTOMER_SHEET_TITLE}'!$A$2:$A${last}"
     workbook.defined_names[CUSTOMER_NAMES_RANGE] = DefinedName(
         CUSTOMER_NAMES_RANGE, attr_text=names_ref
     )
@@ -200,7 +210,7 @@ def _add_customer_dropdown(workbook, sheet, num_rows: int, customers):
     col_letter = openpyxl.utils.get_column_letter(
         HEADERS.index("לקוח מותאם ברשימה") + 1
     )
-    last_row = num_rows + 1  # +1 בגלל שורת הכותרת
+    last_row = num_rows + 1  # +1 בגלל שורת הכותרת בגיליון התוצאות
     dv = DataValidation(
         type="list",
         formula1=CUSTOMER_NAMES_RANGE,  # שם הטווח, בלי '=' (אחרת Excel בולע את הרשימה)
@@ -209,9 +219,10 @@ def _add_customer_dropdown(workbook, sheet, num_rows: int, customers):
     )
     dv.showInputMessage = True
     dv.promptTitle = "לקוח מותאם"
-    dv.prompt = "בחר לקוח מהרשימה הנפתחת (להתאמה ידנית)"
+    dv.prompt = ("בחר מהרשימה, או חפש בגיליון 'לקוחות' (מסנן) והקלד את "
+                 "מספר הלקוח בעמודת 'מספר לקוח במערכת'.")
     dv.errorTitle = "ערך לא ברשימה"
-    dv.error = "בחר לקוח קיים מתוך הרשימה הנפתחת."
+    dv.error = "בחר לקוח קיים מהרשימה, או השאר ריק והקלד מספר לקוח."
     dv.showErrorMessage = True
     sheet.add_data_validation(dv)
     dv.add(f"{col_letter}2:{col_letter}{last_row}")

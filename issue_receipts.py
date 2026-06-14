@@ -217,14 +217,16 @@ def issue_receipts(file_path: str = config.OUTPUT_FILE, mode: str = "dry"):
     approved.sort(key=lambda r: _parse_date(r.deposit_date) or date.max)
     print(f"\nנמצאו {len(approved)} שורות מאושרות (ממוינות לפי תאריך הפקדה, מהמוקדם למאוחר).")
 
-    # בונים מילון שם-לקוח -> מזהה Maven, מתוך קובץ הלקוחות,
-    # כדי שנשלח ל-API את מזהה הלקוח הנכון (ולא רק את השם).
-    # שומרים את אובייקט הלקוח המלא (מזהה + ח.פ) לפי שם, כדי לתמוך גם בבחירה
-    # ידנית מהרשימה הנפתחת - אז המזהה וה-ח.פ נגזרים מהלקוח שנבחר.
-    name_to_customer = {}
+    # מילונים מקובץ הלקוחות: לפי שם ולפי מספר לקוח. שניהם תומכים בהתאמה ידנית:
+    #   - בחירה מהרשימה הנפתחת -> מתאים לפי השם.
+    #   - חיפוש בגיליון 'לקוחות' והקלדת המספר -> מתאים לפי מספר הלקוח.
+    # בשני המקרים המזהה וה-ח.פ נגזרים מהלקוח שנבחר.
+    name_to_customer, id_to_customer = {}, {}
     try:
         for c in load_customers():
             name_to_customer[c.name.strip()] = c
+            if c.customer_id:
+                id_to_customer[str(c.customer_id).strip()] = c
     except Exception as e:
         print(f"⚠️  לא הצלחתי לטעון את קובץ הלקוחות למזהים: {e}")
 
@@ -264,23 +266,30 @@ def issue_receipts(file_path: str = config.OUTPUT_FILE, mode: str = "dry"):
             skipped += 1
             continue
 
-        # הגנה 3: חייב להיות לקוח מזוהה וסכום.
-        if not row.matched_name or not row.amount:
-            print(f"  ⚠️  דילוג - חסר לקוח/סכום: {label}")
+        # הגנה 3: חייב להיות סכום.
+        if not row.amount:
+            print(f"  ⚠️  דילוג - חסר סכום: {label}")
             skipped += 1
             continue
 
-        # מזהה הלקוח: מעדיפים את הלקוח שנבחר *לפי השם* (תומך בבחירה ידנית
-        # מהרשימה הנפתחת - אם שינית את השם, המזהה נגזר מהשם החדש).
-        # אם השם לא נמצא בקובץ הלקוחות - נסמכים על המזהה שכבר בעמודה.
-        chosen = name_to_customer.get((row.matched_name or "").strip())
+        # מזהים את הלקוח בשתי דרכים: לפי השם (רשימה נפתחת) או לפי מספר
+        # הלקוח שהוקלד בעמודת "מספר לקוח במערכת" (אחרי חיפוש בגיליון 'לקוחות').
+        chosen = (name_to_customer.get((row.matched_name or "").strip())
+                  or id_to_customer.get((row.matched_id or "").strip()))
+
+        # שם ומזהה הלקוח לקבלה: נגזרים מהלקוח שזוהה (אם נמצא), אחרת מהעמודות.
+        customer_name = chosen.name if chosen else row.matched_name
         customer_id = (chosen.customer_id if chosen else None) or row.matched_id
-        if not customer_id:
-            print(f"  ⚠️  דילוג - לא נמצא מספר לקוח: {label}")
+        if not customer_name or not customer_id:
+            print(f"  ⚠️  דילוג - לא זוהה לקוח (שם/מספר): {label}")
             skipped += 1
             continue
 
-        # ח.פ לשדה identification: מעדיפים את ה-ח.פ של הלקוח שנבחר (מהרשימה);
+        # מרעננים את התווית עם שם הלקוח שזוהה (למשל כשהותאם לפי מספר בלבד).
+        label = (f"שורה {row.row_number}: {customer_name} "
+                 f"(שיק {row.check_number or '?'}, ₪{row.amount or '?'})")
+
+        # ח.פ לשדה identification: מעדיפים את ה-ח.פ של הלקוח שזוהה (מהרשימה);
         # אם אין לו ח.פ ברשימה - נופלים ל-ח.פ שזוהה בשיק.
         identification = (chosen.company_id if chosen else None) or row.company_id
 
@@ -293,7 +302,7 @@ def issue_receipts(file_path: str = config.OUTPUT_FILE, mode: str = "dry"):
                   f"אם רצית את תאריך ההפקדה - צור מחדש את האקסל (python main.py).")
 
         request = ReceiptRequest(
-            customer_name=row.matched_name,
+            customer_name=customer_name,
             customer_id=customer_id,
             amount=row.amount,
             check_number=row.check_number,
