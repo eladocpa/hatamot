@@ -46,6 +46,23 @@ def _digits_only(value: Optional[str]) -> Optional[str]:
     return digits or None
 
 
+def _amount_value(value) -> Optional[float]:
+    """ממיר סכום מחרוזת (אולי עם ₪/פסיקים) למספר להשוואה. None אם לא ניתן."""
+    if value is None:
+        return None
+    text = re.sub(r"[^0-9.]", "", str(value))
+    try:
+        return round(float(text), 2)
+    except ValueError:
+        return None
+
+
+def _amounts_differ(bank, scanned) -> bool:
+    """האם הסכום מהבנק שונה מהסכום שנסרק מהשיק? (כששניהם קיימים)."""
+    b, s = _amount_value(bank), _amount_value(scanned)
+    return b is not None and s is not None and b != s
+
+
 def process_all(
     reader: CheckReader,
     matcher: CustomerMatcher,
@@ -142,27 +159,40 @@ def _match_positive(reader, matcher, item: CheckItem, details) -> ResultRow:
             detected_name=details.drawer_name, matched_name=None, confidence=0,
             check_number=details.check_number, bank_name=details.bank_name,
             branch_number=details.branch_number, account_number=details.account_number,
-            due_date=details.due_date, amount=details.amount or item.row_amount,
+            due_date=details.due_date, amount=item.row_amount or details.amount,
             status=STATUS_REVIEW, maven_reference=item.row_reference,
             image_path=item.image_path, deposit_date=item.row_date,
             company_id=details.company_id,
             evidence="הצילום לא קריא",
+            scanned_amount=details.amount,
         )
 
     # תאריך פירעון: מעדיפים את מה שנקרא מהצילום; אם חסר -
     # משתמשים בתאריך התנועה מהשורה (תמיד קיים). זה גם תאריך התשלום בקבלה.
     due_date = details.due_date or item.row_date
 
-    # התאמת לקוח (ח.פ + שם + סכום + תאריך).
-    amount_for_match = details.amount or item.row_amount
+    # >>> הסכום לקבלה מגיע *מדף הבנק* בלבד <<<
+    # סכום השיק שנסרק מהצילום עלול לכלול טעויות סריקה, ולכן הוא משמש רק
+    # להשוואה ותיעוד. הסכום הקובע (להתאמה ולקבלה) הוא תמיד סכום השורה מהבנק.
+    bank_amount = item.row_amount or details.amount
+    scanned_amount = details.amount
+
+    # התאמת לקוח (ח.פ + שם + סכום + תאריך) - לפי סכום הבנק האמין.
     match = matcher.match(
         detected_name=details.drawer_name,
         company_id=details.company_id,
-        amount=amount_for_match,
+        amount=bank_amount,
         due_date=due_date,
     )
     status = STATUS_READY if not match.needs_review else STATUS_REVIEW
     evidence_text = "; ".join(match.evidence) if match.evidence else match.reason
+
+    # אם הסכום שנסרק מהשיק שונה מסכום הבנק - מסמנים לתשומת לב (הקבלה
+    # עדיין תצא לפי סכום הבנק, אבל כדאי שתדע על פער הסריקה).
+    if _amounts_differ(bank_amount, scanned_amount):
+        evidence_text = (f"⚠️ סכום בשיק (סריקה: {scanned_amount}) שונה מהבנק "
+                         f"({bank_amount}) - הקבלה לפי הבנק; " + evidence_text)
+        print(f"      ⚠️  פער סכום: בנק {bank_amount} מול סריקה {scanned_amount}")
 
     icon = "✅" if status == STATUS_READY else "🔶"
     print(f"      {icon} {details.drawer_name} -> "
@@ -177,13 +207,14 @@ def _match_positive(reader, matcher, item: CheckItem, details) -> ResultRow:
         branch_number=details.branch_number,
         account_number=details.account_number,
         due_date=due_date,
-        amount=details.amount or item.row_amount,
+        amount=bank_amount,
         status=status,
         maven_reference=item.row_reference,
         image_path=item.image_path,
         deposit_date=item.row_date,
         company_id=details.company_id,
         evidence=evidence_text,
+        scanned_amount=scanned_amount,
         matched_customer_id=match.matched_id,
         matched_company_id=match.matched_company_id,
     )
@@ -205,4 +236,5 @@ def _bounced_action_row(item: CheckItem, details) -> ResultRow:
         deposit_date=item.row_date,
         company_id=details.company_id if details else None,
         evidence="פעולת החזרת שיק (תנועה שלילית) - לתיעוד בלבד",
+        scanned_amount=details.amount if details else None,
     )
