@@ -23,9 +23,10 @@
 
 import csv
 import os
+import re
 from dataclasses import dataclass
 from datetime import date, datetime
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 import openpyxl
 
@@ -114,17 +115,52 @@ def _str(value) -> Optional[str]:
     return str(value).strip()
 
 
-def _load_issued_references() -> set:
-    """טוען מהיומן את האסמכתאות שכבר הוצאה להן קבלה (מניעת כפילויות)."""
-    issued = set()
+def _norm_check(value) -> str:
+    """מספר שיק לצורך השוואה: ספרות בלבד, בלי אפסים מובילים (0000283 == 283)."""
+    digits = re.sub(r"\D", "", str(value)) if value is not None else ""
+    return digits.lstrip("0") or ("0" if digits else "")
+
+
+def _norm_amount(value) -> str:
+    """סכום לצורך השוואה: מספר עם 2 ספרות עשרוניות (3752 == 3752.00)."""
+    if value is None:
+        return ""
+    text = re.sub(r"[^0-9.]", "", str(value))
+    try:
+        return f"{float(text):.2f}"
+    except ValueError:
+        return ""
+
+
+def _check_key(check_number, amount) -> Optional[Tuple[str, str]]:
+    """
+    מפתח גיבוי למניעת כפילות: (מספר שיק מנורמל, סכום מנורמל).
+    מחזיר None אם אחד מהם חסר - אז לא משתמשים בו (כדי לא לדלג בטעות).
+    """
+    c, a = _norm_check(check_number), _norm_amount(amount)
+    if c and a:
+        return (c, a)
+    return None
+
+
+def _load_issued_references() -> Tuple[set, set]:
+    """
+    טוען מהיומן שתי קבוצות למניעת כפילויות:
+      1. אסמכתאות (maven_reference) שכבר הוצאה להן קבלה.
+      2. מפתחות (מספר שיק + סכום) - גיבוי לקבלות ישנות שנרשמו בלי אסמכתא.
+    """
+    issued_refs, issued_keys = set(), set()
     if not os.path.exists(RECEIPTS_LOG):
-        return issued
+        return issued_refs, issued_keys
     with open(RECEIPTS_LOG, "r", encoding="utf-8", newline="") as f:
         for record in csv.DictReader(f):
             ref = record.get("maven_reference")
             if ref:
-                issued.add(ref)
-    return issued
+                issued_refs.add(ref)
+            key = _check_key(record.get("check_number"), record.get("amount"))
+            if key:
+                issued_keys.add(key)
+    return issued_refs, issued_keys
 
 
 def _append_to_log(row: ApprovedRow, receipt_id: str, dry_run: bool):
@@ -199,7 +235,7 @@ def issue_receipts(file_path: str = config.OUTPUT_FILE, mode: str = "dry"):
         print("   (לכל לקוח מיוצג יש מפתח משלו - השתמש במפתח של החברה שעיבדת.)")
         return
 
-    issued_refs = _load_issued_references()
+    issued_refs, issued_keys = _load_issued_references()
     success, skipped, failed = 0, 0, 0
 
     for row in approved:
@@ -214,7 +250,15 @@ def issue_receipts(file_path: str = config.OUTPUT_FILE, mode: str = "dry"):
 
         # הגנה 2: לא מוציאים פעמיים לאותה אסמכתא.
         if row.maven_reference and row.maven_reference in issued_refs:
-            print(f"  ⏭️  דילוג - כבר הוצאה קבלה: {label}")
+            print(f"  ⏭️  דילוג - כבר הוצאה קבלה (אסמכתא): {label}")
+            skipped += 1
+            continue
+
+        # הגנה 2ב (גיבוי): לא מוציאים פעמיים לאותו שיק לפי מספר שיק + סכום.
+        # קריטי לקבלות ישנות שנרשמו ביומן בלי אסמכתא - ככה הן עדיין חוסמות כפילות.
+        check_key = _check_key(row.check_number, row.amount)
+        if check_key and check_key in issued_keys:
+            print(f"  ⏭️  דילוג - כבר הוצאה קבלה (מספר שיק + סכום): {label}")
             skipped += 1
             continue
 
@@ -268,6 +312,8 @@ def issue_receipts(file_path: str = config.OUTPUT_FILE, mode: str = "dry"):
                 _append_to_log(row, receipt_id, dry_run=False)
                 if row.maven_reference:
                     issued_refs.add(row.maven_reference)
+                if check_key:
+                    issued_keys.add(check_key)
             success += 1
         except Exception as e:
             print(f"  ❌ נכשל: {label}\n       {e}")
