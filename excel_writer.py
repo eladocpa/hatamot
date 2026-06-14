@@ -182,14 +182,16 @@ def _add_customer_dropdown(workbook, sheet, num_rows: int, customers):
         return
 
     # גיליון מוסתר עם שמות הלקוחות (עמודה A) והמזהים שלהם (עמודה B, לעיון).
+    # ממיינים לפי א״ב כדי שיהיה קל לאתר שם ברשימה הנפתחת (גם בלי חיפוש).
+    sorted_customers = sorted(customers, key=lambda c: (c.name or "").strip())
     cust_sheet = workbook.create_sheet(title=CUSTOMER_SHEET_TITLE)
-    for i, c in enumerate(customers, start=1):
+    for i, c in enumerate(sorted_customers, start=1):
         cust_sheet.cell(row=i, column=1, value=c.name)
         cust_sheet.cell(row=i, column=2, value=c.customer_id)
     cust_sheet.sheet_state = "hidden"
 
     # טווח בעל-שם לשמות הלקוחות - מקור הרשימה הנפתחת.
-    names_ref = f"'{CUSTOMER_SHEET_TITLE}'!$A$1:$A${len(customers)}"
+    names_ref = f"'{CUSTOMER_SHEET_TITLE}'!$A$1:$A${len(sorted_customers)}"
     workbook.defined_names[CUSTOMER_NAMES_RANGE] = DefinedName(
         CUSTOMER_NAMES_RANGE, attr_text=names_ref
     )
