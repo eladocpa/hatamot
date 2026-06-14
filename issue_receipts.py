@@ -219,10 +219,12 @@ def issue_receipts(file_path: str = config.OUTPUT_FILE, mode: str = "dry"):
 
     # בונים מילון שם-לקוח -> מזהה Maven, מתוך קובץ הלקוחות,
     # כדי שנשלח ל-API את מזהה הלקוח הנכון (ולא רק את השם).
-    name_to_id = {}
+    # שומרים את אובייקט הלקוח המלא (מזהה + ח.פ) לפי שם, כדי לתמוך גם בבחירה
+    # ידנית מהרשימה הנפתחת - אז המזהה וה-ח.פ נגזרים מהלקוח שנבחר.
+    name_to_customer = {}
     try:
         for c in load_customers():
-            name_to_id[c.name.strip()] = c.customer_id
+            name_to_customer[c.name.strip()] = c
     except Exception as e:
         print(f"⚠️  לא הצלחתי לטעון את קובץ הלקוחות למזהים: {e}")
 
@@ -268,13 +270,19 @@ def issue_receipts(file_path: str = config.OUTPUT_FILE, mode: str = "dry"):
             skipped += 1
             continue
 
-        # מזהה הלקוח: מעדיפים את מה שכבר בעמודה "מספר לקוח במערכת";
-        # אם חסר (למשל נמחק) - שולפים מקובץ הלקוחות לפי השם.
-        customer_id = row.matched_id or name_to_id.get((row.matched_name or "").strip())
+        # מזהה הלקוח: מעדיפים את הלקוח שנבחר *לפי השם* (תומך בבחירה ידנית
+        # מהרשימה הנפתחת - אם שינית את השם, המזהה נגזר מהשם החדש).
+        # אם השם לא נמצא בקובץ הלקוחות - נסמכים על המזהה שכבר בעמודה.
+        chosen = name_to_customer.get((row.matched_name or "").strip())
+        customer_id = (chosen.customer_id if chosen else None) or row.matched_id
         if not customer_id:
             print(f"  ⚠️  דילוג - לא נמצא מספר לקוח: {label}")
             skipped += 1
             continue
+
+        # ח.פ לשדה identification: מעדיפים את ה-ח.פ של הלקוח שנבחר (מהרשימה);
+        # אם אין לו ח.פ ברשימה - נופלים ל-ח.פ שזוהה בשיק.
+        identification = (chosen.company_id if chosen else None) or row.company_id
 
         # אזהרה (לא חוסמת): אם חסר תאריך הפקדה, תאריך המסמך ב-Maven ייפול
         # לתאריך *היום* במקום לתאריך ההפקדה. בדרך כלל זה אומר שקובץ האקסל
@@ -295,7 +303,7 @@ def issue_receipts(file_path: str = config.OUTPUT_FILE, mode: str = "dry"):
             due_date=row.due_date,             # תאריך פירעון השיק -> payment_date בפרטי השיק
             document_date=row.deposit_date,    # תאריך הקבלה (תאריך המסמך) = תאריך ההפקדה מדף הבנק
             maven_reference=row.maven_reference,
-            company_id=row.company_id,
+            company_id=identification,         # ח.פ של הלקוח שנבחר (או שזוהה בשיק)
         )
 
         try:

@@ -81,7 +81,7 @@ def main():
     results = process_all(reader, matcher, items)
 
     if results:
-        write_results(results)
+        write_results(results, customers=customers)
         ready = sum(1 for r in results if r.status == STATUS_READY)
         bounced = sum(1 for r in results if r.status == STATUS_BOUNCED)
         review = len(results) - ready - bounced

@@ -139,7 +139,7 @@ def main():
 
     # ---- שלב 7: כתיבת קובץ האקסל ----
     if results:
-        write_results(results)
+        write_results(results, customers=customers)
         ready = sum(1 for r in results if r.status == STATUS_READY)
         bounced = sum(1 for r in results if r.status == STATUS_BOUNCED)
         review = len(results) - ready - bounced

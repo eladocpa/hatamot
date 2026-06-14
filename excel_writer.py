@@ -15,8 +15,15 @@ from typing import List, Optional
 
 import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment
+from openpyxl.worksheet.datavalidation import DataValidation
+from openpyxl.workbook.defined_name import DefinedName
 
 import config
+
+
+# שם הגיליון המוסתר שמחזיק את רשימת הלקוחות (מקור לרשימה הנפתחת).
+CUSTOMER_SHEET_TITLE = "רשימת_לקוחות"
+CUSTOMER_NAMES_RANGE = "CustomerNames"
 
 
 @dataclass
@@ -76,8 +83,13 @@ STATUS_REVIEW = "דורש בדיקה ידנית"
 STATUS_BOUNCED = "שיק שחזר - לא להוציא קבלה"
 
 
-def write_results(rows: List[ResultRow], output_file: str = config.OUTPUT_FILE):
-    """בונה את קובץ האקסל מתוך רשימת השורות."""
+def write_results(rows: List[ResultRow], output_file: str = config.OUTPUT_FILE,
+                  customers=None):
+    """
+    בונה את קובץ האקסל מתוך רשימת השורות.
+    אם הועברה רשימת לקוחות (customers) - מוסיף רשימה נפתחת בעמודת
+    "לקוח מותאם ברשימה", כדי לאפשר בחירת לקוח ידנית בשורות לבירור.
+    """
     workbook = openpyxl.Workbook()
     sheet = workbook.active
     sheet.title = "שיקים לבדיקה"
@@ -139,6 +151,10 @@ def write_results(rows: List[ResultRow], output_file: str = config.OUTPUT_FILE):
             openpyxl.utils.get_column_letter(col_index)
         ].width = width
 
+    # שלב 4: רשימה נפתחת לבחירת לקוח ידנית (אם יש רשימת לקוחות).
+    if customers:
+        _add_customer_dropdown(workbook, sheet, len(rows), customers)
+
     # שמירה חסינה: אם הקובץ פתוח באקסל (PermissionError) - לא קורסים
     # ולא מאבדים את העבודה. שומרים לקובץ חלופי עם חותמת זמן ומודיעים.
     try:
@@ -151,3 +167,47 @@ def write_results(rows: List[ResultRow], output_file: str = config.OUTPUT_FILE):
         print(f"\n⚠️  הקובץ '{output_file}' היה פתוח (אולי באקסל), אז לא ניתן היה לדרוס אותו.")
         print(f"📊 שמרתי במקום זאת לקובץ חדש: {alt_file}")
         print("   (טיפ: סגור את הקובץ באקסל לפני הרצה כדי שיישמר בשם הרגיל.)")
+
+
+def _add_customer_dropdown(workbook, sheet, num_rows: int, customers):
+    """
+    מוסיף רשימה נפתחת (data validation) בעמודת "לקוח מותאם ברשימה",
+    שמקורה ברשימת הלקוחות. כך אפשר לבחור לקוח ידנית בשורות לבירור,
+    ואז הקבלה תופק על שם הלקוח שנבחר.
+
+    המימוש: גיליון מוסתר עם שמות הלקוחות + טווח בעל-שם (named range)
+    שאליו מצביעה הרשימה הנפתחת. בחירה מהרשימה מבטיחה שם תקין מהמערכת.
+    """
+    if not customers:
+        return
+
+    # גיליון מוסתר עם שמות הלקוחות (עמודה A) והמזהים שלהם (עמודה B, לעיון).
+    cust_sheet = workbook.create_sheet(title=CUSTOMER_SHEET_TITLE)
+    for i, c in enumerate(customers, start=1):
+        cust_sheet.cell(row=i, column=1, value=c.name)
+        cust_sheet.cell(row=i, column=2, value=c.customer_id)
+    cust_sheet.sheet_state = "hidden"
+
+    # טווח בעל-שם לשמות הלקוחות - מקור הרשימה הנפתחת.
+    names_ref = f"'{CUSTOMER_SHEET_TITLE}'!$A$1:$A${len(customers)}"
+    workbook.defined_names[CUSTOMER_NAMES_RANGE] = DefinedName(
+        CUSTOMER_NAMES_RANGE, attr_text=names_ref
+    )
+
+    # מחילים את הרשימה הנפתחת על תאי עמודת "לקוח מותאם ברשימה" (שורות הנתונים).
+    col_letter = openpyxl.utils.get_column_letter(
+        HEADERS.index("לקוח מותאם ברשימה") + 1
+    )
+    last_row = num_rows + 1  # +1 בגלל שורת הכותרת
+    dv = DataValidation(
+        type="list",
+        formula1=f"={CUSTOMER_NAMES_RANGE}",
+        allow_blank=True,
+    )
+    dv.promptTitle = "לקוח מותאם"
+    dv.prompt = "בחר לקוח מהרשימה הנפתחת (להתאמה ידנית)"
+    dv.errorTitle = "ערך לא ברשימה"
+    dv.error = "בחר לקוח קיים מתוך הרשימה הנפתחת."
+    dv.showErrorMessage = True
+    sheet.add_data_validation(dv)
+    dv.add(f"{col_letter}2:{col_letter}{last_row}")
